@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd daemon for the Cherubyte agent.
+
+  A LaunchDaemon, not a LaunchAgent: the ARP sweep needs raw sockets, so it runs
+  as root at boot rather than inside somebody's login session. Configuration is
+  read from /Library/Application Support/Cherubyte Agent/agent.env — launchd does
+  not inherit a shell environment, so nothing here depends on one.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>pt.qqc.cherubyte-agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/cherubyte-agent</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- A monitor that stops sweeping is useless, so bring it back from a crash
+       too. ThrottleInterval keeps a crash loop from spinning the CPU. -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/cherubyte-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/cherubyte-agent.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

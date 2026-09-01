@@ -1,0 +1,179 @@
+name: Agent binaries
+
+# One binary per platform, so an agent installs as a native service without
+# Python, a virtualenv or Docker. Each is then installed as a real service on
+# the runner and pointed at a stub panel — packaging and service registration
+# cannot be exercised anywhere else, and neither can the configuration path.
+
+on:
+  push:
+    branches: [main]
+    paths: ["agent/**", "protocol/**", ".github/workflows/agent-binaries.yml"]
+  pull_request:
+    paths: ["agent/**", "protocol/**", ".github/workflows/agent-binaries.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: cherubyte-agent-windows-x86_64.exe
+            binary: cherubyte-agent.exe
+          - os: ubuntu-latest
+            asset: cherubyte-agent-linux-x86_64
+            binary: cherubyte-agent
+          - os: macos-latest
+            asset: cherubyte-agent-macos-arm64
+            binary: cherubyte-agent
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install ./protocol
+          pip install -r agent/requirements.txt
+          pip install pyinstaller==6.11.1
+
+      - name: Install pywin32
+        if: runner.os == 'Windows'
+        run: pip install pywin32==308
+
+      - name: Build
+        working-directory: agent/packaging
+        run: pyinstaller --clean --noconfirm cherubyte-agent.spec
+
+      # ---------------------------------------------------------------- checks
+
+      - name: Install and exercise the service (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        working-directory: agent/packaging/dist
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # A stub panel that accepts an enrolment and any report. Proving the
+          # service *starts* is not enough: the previous installer put its
+          # settings in machine environment variables, which the Service
+          # Control Manager does not see until a reboot — so the agent came up
+          # on its defaults, never found a panel, and the old check passed
+          # anyway because it only asked whether the health endpoint answered.
+          $stub = Start-Job {
+            Add-Type -AssemblyName System.Net.HttpListener -ErrorAction SilentlyContinue
+            $l = [System.Net.HttpListener]::new()
+            $l.Prefixes.Add('http://127.0.0.1:8899/')
+            $l.Start()
+            while ($l.IsListening) {
+              $ctx = $l.GetContext()
+              $body = if ($ctx.Request.Url.AbsolutePath -like '*enrol*') {
+                '{"agent_id":1,"key":"k","name":"ci"}'
+              } else {
+                '{"ok":true,"found":0,"degraded":false,"config":{}}'
+              }
+              $bytes = [Text.Encoding]::UTF8.GetBytes($body)
+              $ctx.Response.ContentType = 'application/json'
+              $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+              $ctx.Response.Close()
+            }
+          }
+          Start-Sleep -Seconds 3
+
+          ..\..\windows\install-service.ps1 -PanelUrl http://127.0.0.1:8899 `
+            -EnrolToken ci-token -Name ci-runner -ExePath (Resolve-Path .\cherubyte-agent.exe)
+
+          $svc = Get-Service CherubyteAgent
+          Write-Host "service status: $($svc.Status)"
+          if ($svc.Status -ne 'Running') { throw "service did not reach Running: $($svc.Status)" }
+
+          # The real assertion: the agent read the config file the installer
+          # wrote, and enrolled. Anything less passes with a broken config path.
+          $ok = $false
+          foreach ($i in 1..20) {
+            try {
+              $r = Invoke-WebRequest http://127.0.0.1:1002/health -UseBasicParsing -TimeoutSec 3
+              $j = $r.Content | ConvertFrom-Json
+              Write-Host "health: $($r.StatusCode) enrolled=$($j.enrolled) last_report_ok=$($j.last_report_ok)"
+              if ($j.enrolled) { $ok = $true; break }
+            } catch {
+              if ($_.Exception.Response) {
+                $body = (New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd()
+                Write-Host "health (degraded): $body"
+              }
+            }
+            Start-Sleep -Seconds 3
+          }
+          if (-not $ok) { throw 'the agent never enrolled — the configuration never reached the service' }
+
+          ..\..\windows\uninstall-service.ps1 -Purge
+          Stop-Job $stub -ErrorAction SilentlyContinue
+          Write-Host 'Windows: installed, configured, enrolled, removed.'
+
+      - name: Install and exercise the service (Linux)
+        if: runner.os == 'Linux'
+        working-directory: agent/packaging/dist
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8899 --bind 127.0.0.1 >/dev/null 2>&1 &
+          # A static server is enough to prove the config arrived: the agent
+          # reaches the URL from the file and reports the panel refusing it,
+          # which it cannot do if it never read the file.
+          sudo ../../linux/install-service.sh --panel http://127.0.0.1:8899 \
+            --token ci-token --name ci-runner --binary ./cherubyte-agent
+          sleep 10
+          # Print the evidence BEFORE asserting on it. The first version of this
+          # check failed on `is-active` and exited before reaching the log dump,
+          # which left a crash-looping binary with no diagnosis in the run.
+          systemctl status cherubyte-agent.service --no-pager --full || true
+          sudo journalctl -u cherubyte-agent.service --no-pager | tail -40 || true
+
+          systemctl is-active --quiet cherubyte-agent.service \
+            || { echo "service is $(systemctl is-active cherubyte-agent.service)" >&2; exit 1; }
+          # sudo: the installer makes it 0600 root-only, because it carries the
+          # enrolment token.
+          sudo test -f /etc/cherubyte-agent/agent.env
+          sudo grep -q '127.0.0.1:8899' /etc/cherubyte-agent/agent.env
+          sudo journalctl -u cherubyte-agent.service --no-pager | grep -q '127.0.0.1:8899' \
+            || { echo 'the agent never contacted the configured panel' >&2; exit 1; }
+          sudo ../../linux/uninstall-service.sh --purge
+          echo 'Linux: installed, configured, contacted the panel, removed.'
+
+      - name: Install and exercise the daemon (macOS)
+        if: runner.os == 'macOS'
+        working-directory: agent/packaging/dist
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8899 --bind 127.0.0.1 >/dev/null 2>&1 &
+          sudo ../../macos/install-daemon.sh --panel http://127.0.0.1:8899 \
+            --token ci-token --name ci-runner --binary ./cherubyte-agent
+          sleep 10
+          sudo launchctl print system/pt.qqc.cherubyte-agent | head -25 || true
+          sudo tail -40 /var/log/cherubyte-agent.log || true
+          sudo test -f "/Library/Application Support/Cherubyte Agent/agent.env"
+          sudo grep -q '127.0.0.1:8899' /var/log/cherubyte-agent.log \
+            || { echo 'the agent never contacted the configured panel' >&2; exit 1; }
+          sudo ../../macos/uninstall-daemon.sh --purge
+          echo 'macOS: installed, configured, contacted the panel, removed.'
+
+      - name: Name the asset
+        shell: bash
+        run: cp "agent/packaging/dist/${{ matrix.binary }}" "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

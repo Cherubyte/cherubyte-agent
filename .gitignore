@@ -1,0 +1,19 @@
+# Python
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.pyc
+agent/.env
+agent/.venv/
+
+# PyInstaller
+agent/packaging/build/
+agent/packaging/dist/
+
+# Editors / OS / tooling
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.pytest_cache/

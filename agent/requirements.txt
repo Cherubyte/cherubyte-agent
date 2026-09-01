@@ -1,0 +1,6 @@
+fastapi==0.141.1
+httpx==0.28.1
+pydantic-settings==2.15.0
+scapy==2.7.0
+uvicorn==0.52.4
+zeroconf==0.150.5
