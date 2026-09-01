@@ -44,35 +44,31 @@ then bump `UPSTREAM` and re-sync here.
 
 ## Installing
 
-An agent needs two things: a panel URL and an enrolment token that panel minted.
-Everything else is configured in the panel and sent back with every report. Mint
-a token in **Settings ▸ Agents** — the page prints the filled-in command for
-each method.
+You install an agent **from the panel**, not from here. An agent needs a panel
+URL and an enrolment token; everything else is configured in the panel and sent
+back with every report. Open **Settings ▸ Agents ▸ New agent** — the page prints
+the filled-in command for each method, and the panel serves the binary itself
+(`GET /api/agents/download/{platform}`) so you never have to reach GitHub.
 
-The native installers drop **one binary** and register it with the system's own
-service manager. No Python, no virtualenv, no Docker.
+**Native** — the panel serves the binary *and* the matching installer, so it is
+two `curl`s. `PANEL` = your panel's URL, `TOK` = the token you just minted.
 
-**Linux** (systemd):
-
-```bash
-sudo ./install-service.sh --panel http://your-panel:1001 --token <token>
-# logs:   journalctl -u cherubyte-agent -f
-# remove: sudo ./uninstall-service.sh
-```
-
-**macOS** (launchd):
+Linux (systemd) / macOS (launchd):
 
 ```bash
-sudo ./install-daemon.sh --panel http://your-panel:1001 --token <token>
-# logs:   tail -f /var/log/cherubyte-agent.log
-# remove: sudo ./uninstall-daemon.sh
+curl -fsSL PANEL/api/agents/download/linux -o cherubyte-agent && chmod +x cherubyte-agent
+curl -fsSL PANEL/api/agents/installer/linux | sudo bash -s -- \
+  --panel PANEL --token TOK --binary ./cherubyte-agent
+#   logs:   journalctl -u cherubyte-agent -f     (macOS: tail -f /var/log/cherubyte-agent.log)
+#   remove: sudo /usr/local/bin/... — or the uninstaller in this repo, with --purge
 ```
 
-**Windows**, from an elevated PowerShell:
+Windows, from an elevated PowerShell:
 
 ```powershell
-.\install-service.ps1 -PanelUrl http://your-panel:1001 -EnrolToken <token>
-# remove: .\uninstall-service.ps1
+curl.exe -fsSL PANEL/api/agents/download/windows -o cherubyte-agent.exe
+curl.exe -fsSL PANEL/api/agents/installer/windows -o install.ps1
+.\install.ps1 -PanelUrl PANEL -EnrolToken TOK -ExePath .\cherubyte-agent.exe
 ```
 
 **Docker** (Linux host):
@@ -81,16 +77,17 @@ sudo ./install-daemon.sh --panel http://your-panel:1001 --token <token>
 docker run -d --name cherubyte-agent --network host \
   --cap-add NET_RAW --cap-add NET_ADMIN \
   -v cherubyte-agent:/var/lib/cherubyte-agent \
-  -e CHERUBYTE_AGENT_PANEL_URL=http://your-panel:1001 \
-  -e CHERUBYTE_AGENT_ENROL_TOKEN=<token> \
+  -e CHERUBYTE_AGENT_PANEL_URL=PANEL \
+  -e CHERUBYTE_AGENT_ENROL_TOKEN=TOK \
   ghcr.io/cherubyte/cherubyte-agent:latest
 ```
 
 Keep the state volume. Without it the agent re-enrols on every restart, and an
 enrolment token is single use.
 
-Every installer writes the same `agent.env` and keeps the enrolment key outside
-the install directory, so upgrading the binary never loses it:
+The installers write their systemd unit / launchd plist inline, so the piped
+`curl … | sudo bash` above needs nothing else. Each keeps the enrolment key
+outside the install directory, so upgrading the binary never loses it:
 
 | | Config and state |
 |---|---|
