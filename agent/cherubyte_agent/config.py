@@ -90,8 +90,10 @@ class Settings(BaseSettings):
     enable_passive_arp: bool = True
     # A passive sighting older than this cannot vouch for a host still being
     # there — keeps arp_sniffer's never-forgets cache from pinning a device
-    # online long after it has actually left.
-    passive_arp_ttl_seconds: int = 300
+    # online long after it has actually left. Kept below the panel's
+    # offline_after_seconds (180s) so one stray overheard packet can never hold
+    # a device online longer than the panel's own grace window would have.
+    passive_arp_ttl_seconds: int = 120
     enable_snmp: bool = False
     snmp_community: str = "public"
 

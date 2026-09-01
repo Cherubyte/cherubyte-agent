@@ -16,7 +16,7 @@ from cherubyte_protocol import (
     WanObservation,
 )
 
-from . import dhcp_sniffer, wan
+from . import dhcp_sniffer, hoststat, wan
 from .config import settings
 from .scanner import Host, local_subnets, scan_network
 
@@ -97,4 +97,5 @@ async def collect() -> AgentReport:
         dhcp_fingerprints=len(dhcp_sniffer.all_fingerprints()),
         healthy=healthy,
         health_port=settings.health_port,
+        host_temp_c=hoststat.read_cpu_temp(),
     )

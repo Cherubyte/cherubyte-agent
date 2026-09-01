@@ -20,7 +20,10 @@ from .config import settings
 
 logger = logging.getLogger("cherubyte.agent.reporter")
 
-AGENT_VERSION = "1.0.0"
+# The agent's own version — this repo's source of truth for it. Bump on every
+# change; a GitHub release is tagged `v<this>` and the panel offers that build
+# for download. (Independent of the panel's version and of PROTOCOL_VERSION.)
+AGENT_VERSION = "1.1.0"
 
 
 class NotEnrolled(RuntimeError):

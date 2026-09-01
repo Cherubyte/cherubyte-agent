@@ -24,3 +24,16 @@ jobs:
       - name: Run tests
         working-directory: agent
         run: pytest -q
+
+  protocol-drift:
+    # The vendored protocol/ must stay byte-identical to the commit it is
+    # pinned to in Cherubyte/cherubyte (protocol/UPSTREAM). A wire change that
+    # landed on only one side fails here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Re-sync from the pinned upstream and check for drift
+        run: |
+          ./scripts/sync-protocol.sh
+          git diff --exit-code -- protocol \
+            || { echo "::error::protocol/ has drifted from protocol/UPSTREAM — run scripts/sync-protocol.sh"; exit 1; }

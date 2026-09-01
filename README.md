@@ -20,19 +20,27 @@ the segment it watches; the panel does not, and can live anywhere.
 | `scripts/` | systemd unit and installer for running from a source checkout |
 | `Dockerfile.agent` | the container image |
 
-## `protocol/` is a copy, and copies drift
+## `protocol/` is a vendored copy, pinned and drift-checked
 
-`cherubyte_protocol` is the contract between an agent and a panel, and the panel
-side of it lives in the [main repository](https://github.com/Cherubyte/cherubyte),
-where the backend imports the same package. This directory is a **vendored
-copy**, taken from `cherubyte-protocol` version `3.0.0`.
+`cherubyte_protocol` is the contract between an agent and a panel. Its source of
+truth is `protocol/` in the [main repository](https://github.com/Cherubyte/cherubyte),
+where the panel imports it — the panel is the half that *defines* what it will
+accept. This directory is a **vendored copy** of that, and `protocol/UPSTREAM`
+records the exact `cherubyte` commit it was taken from.
 
-Two copies of a contract is precisely the failure the contract exists to
-prevent: change one side, ship it, and the two halves disagree at runtime rather
-than at build time. Until this is resolved — by publishing the package, by a
-submodule, or by keeping it in one repository and consuming it from there — a
-change to the wire format has to be made in **both** places in the same change,
-and `agent/tests/test_contract.py` is the test that will tell you if it was not.
+Two copies of a contract is the failure the contract exists to prevent — change
+one side, ship it, and the halves disagree at runtime rather than at build time.
+Two things keep them honest:
+
+- **`scripts/sync-protocol.sh`** re-copies `protocol/` from the pinned `UPSTREAM`
+  commit (pass a new SHA to move the pin). Run it, commit the result, done.
+- **CI** (`protocol-drift` job) re-runs that sync against `UPSTREAM` and fails on
+  any diff — so a wire change landed on only one side cannot merge here.
+- **`agent/tests/test_contract.py`** fails if a `Host` field has no home in the
+  protocol.
+
+So a wire-format change is deliberately two commits: land it in `cherubyte`,
+then bump `UPSTREAM` and re-sync here.
 
 ## Installing
 
@@ -125,6 +133,20 @@ configuration path cannot be exercised any other way.
 pip install ./protocol -r agent/requirements.txt pyinstaller==6.11.1
 cd agent/packaging && pyinstaller --clean --noconfirm cherubyte-agent.spec
 ```
+
+## Releasing
+
+The agent's version lives in one place: `AGENT_VERSION` in
+`agent/cherubyte_agent/reporter.py`. Bump it in the change, then after merge:
+
+```bash
+gh release create "v$(python -c 'import agent.cherubyte_agent.reporter as r; print(r.AGENT_VERSION)')" --generate-notes
+```
+
+That fires `agent-binaries.yml` (attaches the three native binaries to the
+release) and `images.yml` (publishes `ghcr.io/cherubyte/cherubyte-agent`
+`:latest` `:X.Y` `:X.Y.Z`). The panel reads `releases/latest` from this repo and
+offers that build in **Settings ▸ Agents**.
 
 ## Licence
 
