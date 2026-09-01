@@ -17,6 +17,9 @@ on:
 
 jobs:
   build:
+    # `contents: write` so the release event can attach the built binaries.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -127,7 +130,11 @@ jobs:
           # which it cannot do if it never read the file.
           sudo ../../linux/install-service.sh --panel http://127.0.0.1:8899 \
             --token ci-token --name ci-runner --binary ./cherubyte-agent
-          sleep 10
+          ok=""
+          for i in $(seq 1 20); do
+            if sudo journalctl -u cherubyte-agent.service --no-pager | grep -q '127.0.0.1:8899'; then ok=1; break; fi
+            sleep 3
+          done
           # Print the evidence BEFORE asserting on it. The first version of this
           # check failed on `is-active` and exited before reaching the log dump,
           # which left a crash-looping binary with no diagnosis in the run.
@@ -140,8 +147,7 @@ jobs:
           # enrolment token.
           sudo test -f /etc/cherubyte-agent/agent.env
           sudo grep -q '127.0.0.1:8899' /etc/cherubyte-agent/agent.env
-          sudo journalctl -u cherubyte-agent.service --no-pager | grep -q '127.0.0.1:8899' \
-            || { echo 'the agent never contacted the configured panel' >&2; exit 1; }
+          [ -n "$ok" ] || { echo 'the agent never contacted the configured panel' >&2; exit 1; }
           sudo ../../linux/uninstall-service.sh --purge
           echo 'Linux: installed, configured, contacted the panel, removed.'
 
@@ -153,12 +159,17 @@ jobs:
           python3 -m http.server 8899 --bind 127.0.0.1 >/dev/null 2>&1 &
           sudo ../../macos/install-daemon.sh --panel http://127.0.0.1:8899 \
             --token ci-token --name ci-runner --binary ./cherubyte-agent
-          sleep 10
+          # the loop sleeps 3s before the first cycle, then the report round-trip
+          # — poll rather than guess a single sleep on a slow runner
+          ok=""
+          for i in $(seq 1 20); do
+            if sudo grep -q '127.0.0.1:8899' /var/log/cherubyte-agent.log 2>/dev/null; then ok=1; break; fi
+            sleep 3
+          done
           sudo launchctl print system/pt.qqc.cherubyte-agent | head -25 || true
           sudo tail -40 /var/log/cherubyte-agent.log || true
           sudo test -f "/Library/Application Support/Cherubyte Agent/agent.env"
-          sudo grep -q '127.0.0.1:8899' /var/log/cherubyte-agent.log \
-            || { echo 'the agent never contacted the configured panel' >&2; exit 1; }
+          [ -n "$ok" ] || { echo 'the agent never contacted the configured panel' >&2; exit 1; }
           sudo ../../macos/uninstall-daemon.sh --purge
           echo 'macOS: installed, configured, contacted the panel, removed.'
 

@@ -3,6 +3,11 @@
 #
 #   sudo ./install-daemon.sh --panel http://192.168.1.9:1001 --token <token> [--name sala]
 #
+# Self-contained — the plist is written inline, so it also works piped:
+#
+#   curl -fsSL http://panel:1001/api/agents/installer/macos \
+#     | sudo bash -s -- --panel http://panel:1001 --token <token> --binary ./cherubyte-agent
+#
 # Needs root: the ARP sweep uses raw sockets, and a LaunchDaemon is registered
 # machine-wide rather than per login session.
 set -euo pipefail
@@ -11,7 +16,7 @@ LABEL="pt.qqc.cherubyte-agent"
 BIN=/usr/local/bin/cherubyte-agent
 DATA="/Library/Application Support/Cherubyte Agent"
 PLIST="/Library/LaunchDaemons/$LABEL.plist"
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || pwd)"
 
 PANEL=""; TOKEN=""; NAME="$(scutil --get ComputerName 2>/dev/null || hostname -s)"; SRC="$HERE/cherubyte-agent"
 while [ $# -gt 0 ]; do
@@ -44,7 +49,36 @@ CONF
 chmod 600 "$DATA/agent.env"
 chown root:wheel "$DATA/agent.env"
 
-install -m 0644 "$HERE/$LABEL.plist" "$PLIST"
+# The plist, written inline rather than copied from a sibling — so this script
+# is the only thing an install needs. Keep in sync with
+# agent/macos/pt.qqc.cherubyte-agent.plist (a test checks they match).
+cat > "$PLIST" <<'PLISTFILE'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>pt.qqc.cherubyte-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/cherubyte-agent</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/cherubyte-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/cherubyte-agent.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
+PLISTFILE
 chown root:wheel "$PLIST"
 
 # bootout first so re-running this upgrades cleanly instead of erroring
