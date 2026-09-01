@@ -1,0 +1,74 @@
+name: Image
+
+# Builds the agent image and publishes it to GHCR.
+#
+#   pull request      ->  build only, one arch, prove it builds
+#   release           ->  build + publish  :latest  :X.Y  :X.Y.Z  :sha-<commit>
+#                         for linux/amd64 + linux/arm64
+#   workflow_dispatch ->  build + publish  :edge :sha-<commit>  (a pre-release
+#                         image to test a panel against)
+#
+# Publishing on a release is what makes the panel's one-line `docker run` true.
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile.agent"
+      - "agent/**"
+      - "protocol/**"
+      - ".github/workflows/images.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  PUBLISH: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+        # arm64 is the point: the target machine is usually a Raspberry Pi. Only
+        # emulate it when the result is going to be pushed.
+        if: env.PUBLISH == 'true'
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/cherubyte-agent
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=sha,enable=${{ env.PUBLISH == 'true' }}
+
+      - name: Build and publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.agent
+          platforms: ${{ env.PUBLISH == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags || 'cherubyte-agent:test' }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=cherubyte-agent
+          cache-to: type=gha,scope=cherubyte-agent,mode=max

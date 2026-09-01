@@ -410,8 +410,24 @@ def _ping_sweep(cidr: str, known_only: bool = False) -> list[str]:
         return [ip for ip in ex.map(ping, targets) if ip]
 
 
+# Kernel neighbour states that actually vouch for a host being reachable *now*.
+# STALE is deliberately excluded: it means the kernel still has a cached MAC but
+# has not confirmed the host since the entry aged out — a device that left sits
+# in STALE for a long time (and our own per-cycle ping to a dead address keeps
+# resurrecting the STALE lladdr), so treating it as "online" pins departed
+# devices online forever. REACHABLE is confirmed within the reachable-time
+# window; PERMANENT is a static entry an operator put there on purpose.
+_LIVE_NEIGH_STATES = frozenset({"REACHABLE", "PERMANENT"})
+
+
 def _neighbour_table() -> dict[str, str]:
-    """{ip: mac} from `ip neigh` (REACHABLE/STALE/DELAY/PROBE), lowercased."""
+    """{ip: mac} for neighbours the kernel currently considers reachable.
+
+    Only REACHABLE/PERMANENT entries — see `_LIVE_NEIGH_STATES`. The active ARP
+    sweep and ping sweep both refresh a present host to REACHABLE every cycle,
+    so this never loses a real device; it only stops STALE/FAILED/DELAY/PROBE
+    entries from reading as liveness.
+    """
     import subprocess
 
     out: dict[str, str] = {}
@@ -429,8 +445,8 @@ def _neighbour_table() -> dict[str, str]:
         if len(parts) >= 5 and parts[1] == "dev" and "lladdr" in parts:
             ip = parts[0]
             mac = parts[parts.index("lladdr") + 1].lower()
-            state = parts[-1]
-            if mac != "00:00:00:00:00:00" and state not in ("FAILED", "INCOMPLETE"):
+            state = parts[-1].upper()
+            if mac != "00:00:00:00:00:00" and state in _LIVE_NEIGH_STATES:
                 out[ip] = mac
     return out
 

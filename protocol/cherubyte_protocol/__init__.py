@@ -30,7 +30,9 @@ from pydantic import BaseModel, Field
 #:     panel can name managed gear and draw the links between switches.
 #: v4: adds `HostObservation.llmnr_name` — an LLMNR reverse lookup, another
 #:     name source for Windows hosts alongside NetBIOS.
-PROTOCOL_VERSION = 4
+#: v5: adds `AgentReport.host_temp_c` — the CPU/SoC temperature of the machine
+#:     the agent runs on, so the panel can chart it next to its own host's.
+PROTOCOL_VERSION = 5
 
 __all__ = [
     "PROTOCOL_VERSION",
@@ -143,6 +145,9 @@ class AgentReport(BaseModel):
     # least the agent's own host, so this is "the scan is broken", not "the
     # network emptied" — and the panel must not expire devices on it.
     healthy: bool = True
+    # CPU / SoC temperature of the machine this agent runs on, in °C. None when
+    # the host exposes no readable sensor (most containers, macOS, Windows).
+    host_temp_c: float | None = None
     # Where this agent's health/trigger server is listening. The panel uses it,
     # with the address the report arrived from, to ask for an out-of-band sweep.
     health_port: int = 1002
