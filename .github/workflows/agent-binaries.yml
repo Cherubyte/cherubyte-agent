@@ -17,6 +17,9 @@ on:
 
 jobs:
   build:
+    # `contents: write` so the release event can attach the built binaries.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
