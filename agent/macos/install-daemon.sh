@@ -32,10 +32,25 @@ done
 [ "$(id -u)" -eq 0 ] || { echo "Run with sudo." >&2; exit 1; }
 [ -n "$PANEL" ] || { echo "--panel is required (the URL of your Cherubyte panel)." >&2; exit 2; }
 [ -n "$TOKEN" ] || { echo "--token is required (mint one in the panel, Config > Agents)." >&2; exit 2; }
-[ -f "$SRC" ] || { echo "cherubyte-agent binary not found at $SRC — pass --binary." >&2; exit 1; }
+[ -e "$SRC" ] || { echo "cherubyte-agent not found at $SRC - pass --binary." >&2; exit 1; }
 
 echo ">> Installing $SRC -> $BIN"
-install -m 0755 "$SRC" "$BIN"
+# A onedir build is an executable with an _internal directory of libraries
+# beside it, and the two cannot be separated: copying just the executable
+# gives a binary that starts and then cannot load its own Python runtime.
+SRC_DIR=$(cd "$(dirname "$SRC")" && pwd)
+if [ -d "$SRC_DIR/_internal" ]; then
+  LIBDIR=/usr/local/lib/cherubyte-agent
+  rm -rf "$LIBDIR"
+  mkdir -p "$LIBDIR"
+  cp -R "$SRC_DIR"/. "$LIBDIR"/
+  chmod 0755 "$LIBDIR/$(basename "$SRC")"
+  # A symlink rather than a copy, so the plist keeps pointing at one stable
+  # path while the real thing lives with its libraries.
+  ln -sf "$LIBDIR/$(basename "$SRC")" "$BIN"
+else
+  install -m 0755 "$SRC" "$BIN"
+fi
 
 mkdir -p "$DATA"
 # Configuration in a file rather than the environment: launchd gives a daemon

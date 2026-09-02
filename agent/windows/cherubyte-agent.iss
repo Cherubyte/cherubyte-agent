@@ -48,10 +48,13 @@ DisableProgramGroupPage=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
+; Relative to THIS FILE, not to wherever iscc was run from, which is how
+; Inno resolves a relative Source.
+;
 ; The whole folder. This is a onedir build: the libraries sit beside the
 ; executable instead of being unpacked to a temporary directory on every
 ; single start, which is what the previous build did.
-Source: "dist\cherubyte-agent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\packaging\dist\cherubyte-agent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Cherubyte status"; Filename: "{app}\cherubyte-agent.exe"; Parameters: "tray"

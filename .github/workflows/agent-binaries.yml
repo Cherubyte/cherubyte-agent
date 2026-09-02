@@ -64,6 +64,18 @@ jobs:
 
       # ---------------------------------------------------------------- checks
 
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: agent/packaging
+        # iscc ships with the GitHub Windows runner image. The version comes
+        # from the tag when there is one, so Add/Remove Programs shows
+        # something meaningful rather than 0.0.0.
+        run: |
+          iscc /DAppVersion=%AGENT_VERSION% /O.. ..\windows\cherubyte-agent.iss
+        env:
+          AGENT_VERSION: ${{ github.event_name == 'release' && github.ref_name || '0.0.0' }}
+
       - name: Install and exercise the service (Windows)
         if: runner.os == 'Windows'
         shell: powershell
@@ -128,6 +140,15 @@ jobs:
           ..\..\windows\install-service.ps1 -PanelUrl http://127.0.0.1:8899 `
             -EnrolToken ci-token -Name ci-runner -ExePath (Resolve-Path .\cherubyte-agent\cherubyte-agent.exe)
 
+          # The libraries have to have travelled with the executable. A onedir
+          # build copied as a single file starts, fails to load its own Python
+          # runtime and registers nothing - which is exactly what happened the
+          # first time this ran.
+          $installed = Join-Path $env:ProgramFiles 'Cherubyte Agent'
+          if (-not (Test-Path (Join-Path $installed '_internal'))) {
+            throw 'The _internal folder did not travel with the executable'
+          }
+
           $svc = Get-Service CherubyteAgent
           Write-Host "service status: $($svc.Status)"
           if ($svc.Status -ne 'Running') { throw "service did not reach Running: $($svc.Status)" }
@@ -154,6 +175,54 @@ jobs:
           ..\..\windows\uninstall-service.ps1 -Purge
           Stop-Job $stub -ErrorAction SilentlyContinue
           Write-Host 'Windows: installed, configured, enrolled, removed.'
+
+      - name: Install and remove with the real installer (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        working-directory: agent
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The installer is what somebody double clicks, so it is the thing
+          # that has to work. /VERYSILENT skips the wizard; the panel address
+          # normally comes from a page, so it is written here instead.
+          $setup = Resolve-Path .\CherubyteAgentSetup.exe
+          Write-Host "running $setup"
+          $p = Start-Process -FilePath $setup -Wait -PassThru `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL'
+          if ($p.ExitCode -ne 0) { throw "the installer exited $($p.ExitCode)" }
+
+          $installed = Join-Path $env:ProgramFiles 'Cherubyte Agent'
+          foreach ($needed in 'cherubyte-agent.exe', '_internal') {
+            if (-not (Test-Path (Join-Path $installed $needed))) {
+              throw "$needed is missing from $installed"
+            }
+          }
+
+          $svc = Get-Service CherubyteAgent -ErrorAction SilentlyContinue
+          if (-not $svc) { throw 'the installer did not register the service' }
+          Write-Host "service: $($svc.Status)"
+
+          # It appears in Add/Remove Programs, which is where somebody will
+          # look to get rid of it.
+          $key = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                               'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall' `
+                 -ErrorAction SilentlyContinue |
+                 ForEach-Object { Get-ItemProperty $_.PSPath } |
+                 Where-Object { $_.DisplayName -like 'Cherubyte*' }
+          if (-not $key) { throw 'no Add/Remove Programs entry' }
+          Write-Host "uninstall entry: $($key.DisplayName)"
+
+          # And it comes off again. An installer that cannot be undone is
+          # worse than a script.
+          $uninstall = $key.QuietUninstallString
+          if (-not $uninstall) { $uninstall = $key.UninstallString + ' /VERYSILENT' }
+          Write-Host "uninstalling with $uninstall"
+          Start-Process -FilePath 'cmd.exe' -Wait -ArgumentList '/c', $uninstall
+          Start-Sleep -Seconds 5
+          if (Get-Service CherubyteAgent -ErrorAction SilentlyContinue) {
+            throw 'the service survived the uninstall'
+          }
+          Write-Host 'Windows: installed and removed with the installer.'
 
       - name: Install and exercise the service (Linux)
         if: runner.os == 'Linux'
@@ -209,18 +278,6 @@ jobs:
           [ -n "$ok" ] || { echo 'the agent never contacted the configured panel' >&2; exit 1; }
           sudo ../../macos/uninstall-daemon.sh --purge
           echo 'macOS: installed, configured, contacted the panel, removed.'
-
-      - name: Build the Windows installer
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: agent/packaging
-        # iscc ships with the GitHub Windows runner image. The version comes
-        # from the tag when there is one, so Add/Remove Programs shows
-        # something meaningful rather than 0.0.0.
-        run: |
-          iscc /DAppVersion=%AGENT_VERSION% /O.. ..\windows\cherubyte-agent.iss
-        env:
-          AGENT_VERSION: ${{ github.event_name == 'release' && github.ref_name || '0.0.0' }}
 
       - name: Name the asset
         shell: bash

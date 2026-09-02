@@ -144,7 +144,18 @@ if (Test-Path $StateFile) {
 
 Write-Host "Installing to $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Copy-Item -Path $ExePath -Destination (Join-Path $InstallDir 'cherubyte-agent.exe') -Force
+
+# The build is a folder: an executable with an _internal directory of
+# libraries beside it. Copying only the executable gives a binary that starts,
+# cannot load its own Python runtime, and says so in a way nothing catches.
+$SourceDir = Split-Path -Parent $ExePath
+if (Test-Path (Join-Path $SourceDir '_internal')) {
+    Copy-Item -Path (Join-Path $SourceDir '*') -Destination $InstallDir -Recurse -Force
+} else {
+    # An older single-file build. Still supported, because somebody may be
+    # pointing this at a binary they already had.
+    Copy-Item -Path $ExePath -Destination (Join-Path $InstallDir 'cherubyte-agent.exe') -Force
+}
 
 # Configuration goes in a FILE, not in machine environment variables.
 #
