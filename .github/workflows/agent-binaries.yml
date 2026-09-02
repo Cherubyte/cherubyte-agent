@@ -76,7 +76,14 @@ jobs:
             $l.Start()
             while ($l.IsListening) {
               $ctx = $l.GetContext()
-              $body = if ($ctx.Request.Url.AbsolutePath -like '*enrol*') {
+              $path = $ctx.Request.Url.AbsolutePath
+              $body = if ($path -like '*device-code*') {
+                # Approved the instant it is asked for. The waiting is a person
+                # clicking a button, which is not what this is checking.
+                '{"code":"CI00-TEST","poll_secret":"s","verification_url":"http://127.0.0.1:8899/a/CI00-TEST","expires_in":600,"interval":2}'
+              } elseif ($path -like '*device-token*') {
+                '{"agent_id":7,"key":"device-key","name":"ci-runner"}'
+              } elseif ($path -like '*enrol*') {
                 '{"agent_id":1,"key":"k","name":"ci"}'
               } else {
                 '{"ok":true,"found":0,"degraded":false,"config":{}}'
@@ -88,6 +95,28 @@ jobs:
             }
           }
           Start-Sleep -Seconds 3
+
+          # No token: the path a person takes. -NoBrowser because a runner has
+          # no desktop to open one on, and launching it would hang the job.
+          #
+          # This is the check that was missing. The installer required a token
+          # as a mandatory parameter long after the agent had learned to enrol
+          # by approval, and nothing here noticed because nothing here ever ran
+          # it without one.
+          ..\..\windows\install-service.ps1 -PanelUrl http://127.0.0.1:8899 `
+            -Name ci-browserless -NoBrowser -ExePath (Resolve-Path .\cherubyte-agent.exe)
+
+          $state = Join-Path $env:ProgramData 'Cherubyte Agent\agent.json'
+          if (-not (Test-Path $state)) {
+            throw "Enrolling by approval left no key at $state"
+          }
+          $key = (Get-Content $state -Raw | ConvertFrom-Json).key
+          if ($key -ne 'device-key') { throw "Wrong key stored: $key" }
+          Write-Host 'Windows: enrolled by approval, key stored.'
+
+          # Start again from nothing for the token path below.
+          ..\..\windows\uninstall-service.ps1 -Purge
+          Start-Sleep -Seconds 2
 
           ..\..\windows\install-service.ps1 -PanelUrl http://127.0.0.1:8899 `
             -EnrolToken ci-token -Name ci-runner -ExePath (Resolve-Path .\cherubyte-agent.exe)
@@ -278,10 +307,18 @@ jobs:
           )
           print("The signature verifies against the key compiled into the agent.")
           PY
-      - name: Attach the digests and the signature
+      # The installers go with the binaries. A release that is three bare
+      # executables leaves somebody to find the install script in the
+      # repository, which is one step too many and the reason the first
+      # Windows install was done by double-clicking the exe.
+      - name: Attach the digests, the signature and the installers
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             SHA256SUMS
             SHA256SUMS.sig
+            agent/windows/install-service.ps1
+            agent/windows/uninstall-service.ps1
+            agent/linux/install-service.sh
+            agent/macos/install-daemon.sh

@@ -146,8 +146,48 @@ def save_pending(data: dict) -> None:
     path.chmod(0o600)
 
 
+def _notice_path() -> Path:
+    """Where the approval link is left for a person to find.
+
+    Next to the configuration rather than the state file, because somebody
+    looking for it will be looking where the installer told them the config
+    lives, not where a key they have never seen is kept.
+    """
+    from .config import config_dir
+
+    return config_dir() / "enrolment.txt"
+
+
+def _leave_notice(pending: dict) -> None:
+    """Write the link to a file, since a service has nowhere to print it."""
+    text = "\n".join(
+        [
+            "This machine is waiting to be admitted to a Cherubyte panel.",
+            "",
+            "  Open:  " + str(pending.get("verification_url", "")),
+            "  Code:  " + str(pending.get("code", "")),
+            "",
+            "Approve it while signed in to your panel. This file disappears",
+            "once the machine has been admitted.",
+            "",
+        ]
+    )
+    try:
+        path = _notice_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    except OSError as exc:
+        # The agent still works and still prints the link; this is the copy
+        # for somebody who was not watching.
+        logger.warning("Could not write the enrolment notice: %s", exc)
+
+
 def clear_pending() -> None:
     _pending_path().unlink(missing_ok=True)
+    # The link is dead once the code is spent, and a stale file telling
+    # somebody to approve a machine that is already reporting is worse than
+    # no file at all.
+    _notice_path().unlink(missing_ok=True)
 
 
 async def request_device_code() -> dict:
@@ -201,6 +241,7 @@ async def enrol_by_approval() -> tuple[int, str]:
     pending = load_pending()
     if pending is None:
         pending = await request_device_code()
+        _leave_notice(pending)
         logger.warning(
             "\n\n  This machine is not enrolled yet.\n"
             "  To admit it, open:\n\n      %s\n\n"

@@ -225,3 +225,57 @@ async def test_waiting_for_approval_is_not_reported_as_a_failure(panel, monkeypa
     assert "K7RQ-4TDX" in main._state["last_error"]
     assert "approval" in main._state["last_error"]
     assert main._state["enrolled"] is False
+
+
+# -- somewhere to find the link ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_link_is_left_in_a_file_a_person_can_find(panel, state, monkeypatch):
+    # A Windows service has no console. The link printed to a log nobody reads
+    # is how an agent ends up waiting forever with no way to admit it.
+    from cherubyte_agent import config
+
+    monkeypatch.setattr(config, "config_dir", lambda: state)
+    with pytest.raises(reporter.AwaitingApproval):
+        await reporter.enrol_by_approval()
+
+    notice = (state / "enrolment.txt").read_text()
+    assert "K7RQ-4TDX" in notice
+    assert "http://panel.test/a/K7RQ-4TDX" in notice
+
+
+@pytest.mark.asyncio
+async def test_the_file_goes_away_once_the_machine_is_admitted(panel, state, monkeypatch):
+    # A stale note telling somebody to approve a machine that is already
+    # reporting is worse than no note.
+    from cherubyte_agent import config
+
+    monkeypatch.setattr(config, "config_dir", lambda: state)
+    with pytest.raises(reporter.AwaitingApproval):
+        await reporter.enrol_by_approval()
+    assert (state / "enrolment.txt").exists()
+
+    panel[0]["approved"] = True
+    await reporter.enrol_by_approval()
+    assert not (state / "enrolment.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_notice_that_cannot_be_written_is_not_fatal(panel, state, monkeypatch):
+    # The agent still works and still logs the link; the file is the copy for
+    # somebody who was not watching.
+    #
+    # The unwritable directory is a real file standing where a directory needs
+    # to be, rather than a patched mkdir: patching it broke saving the pending
+    # code as well, which is the thing under test failing for the wrong reason.
+    from cherubyte_agent import config
+
+    blocker = state / "blocker"
+    blocker.write_text("not a directory")
+    monkeypatch.setattr(config, "config_dir", lambda: blocker / "inside")
+
+    with pytest.raises(reporter.AwaitingApproval):
+        await reporter.enrol_by_approval()
+    # The enrolment itself carried on: the code was requested and stored.
+    assert reporter.load_pending() is not None
