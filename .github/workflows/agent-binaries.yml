@@ -224,7 +224,7 @@ jobs:
             echo "rather than publishing binaries that cannot be verified." >&2
             exit 1
           fi
-          pip install --quiet "cryptography==46.0.3"
+          pip install --quiet "cryptography==50.0.1"
           python - <<'PY'
           import base64, os
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey

@@ -25,6 +25,13 @@ from __future__ import annotations
 import base64
 import hashlib
 
+# Imported here rather than inside the function that uses it, deliberately.
+# Lazily, a packaged binary that PyInstaller had failed to bundle this into
+# would build, start, run for weeks and only fail at the moment it tried to
+# verify an update — which is the one path that has to work.
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 # Ed25519, base64 of the 32 raw bytes. Generated 2 Sep 2026; the private half
 # lives only in the cherubyte-agent repository's Actions secrets.
 RELEASE_PUBLIC_KEY = "5vFRsEiIF25Sq5C7vfRufi5feoxEexxwk3iabmkNGG4="
@@ -45,12 +52,6 @@ def verify_sums(sums: bytes, signature: bytes) -> dict[str, str]:
     the file it describes, and an ignored return value there is the whole
     vulnerability.
     """
-    try:
-        from cryptography.exceptions import InvalidSignature
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    except ImportError as exc:  # pragma: no cover - the dependency is pinned
-        raise VerificationError("no crypto library available to verify the release") from exc
-
     key = Ed25519PublicKey.from_public_bytes(base64.b64decode(RELEASE_PUBLIC_KEY))
     try:
         key.verify(signature, sums)

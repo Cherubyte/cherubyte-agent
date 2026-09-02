@@ -18,6 +18,17 @@ hidden = [
     "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan.on",
 ]
+# The Rust extension behind Ed25519 verification. PyInstaller ships a hook for
+# cryptography, but this is what the agent uses to check a release signature
+# before installing it, and a binary that cannot verify is a binary that can
+# never update itself again. Named explicitly rather than trusted to analysis.
+#
+# It is also why release_key imports cryptography at module scope: if this is
+# ever missed, the service fails to start and the workflow step below catches
+# it, rather than the binary running for weeks and failing at the one moment
+# it matters.
+hidden += ["cryptography.hazmat.bindings._rust"]
+
 if WINDOWS:
     hidden += ["win32timezone", "cherubyte_agent.winservice"]
 
