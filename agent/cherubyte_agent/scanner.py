@@ -270,11 +270,27 @@ def _detect_subnet() -> tuple[str, str | None]:
 
     from scapy.all import conf, get_if_addr, get_if_list
 
-    iface = settings.interface or conf.iface
-    try:
-        ip = get_if_addr(str(iface))
-    except Exception:  # noqa: BLE001
-        ip = None
+    iface: str | None = settings.interface or None
+    ip: str | None = None
+
+    # The routing table is the most reliable source: the interface and source
+    # address the OS would use to reach a public IP is, by definition, the one
+    # on the real LAN — and unlike conf.iface it is not a boot-time snapshot.
+    if not iface:
+        try:
+            r_iface, r_ip, _ = conf.route.route("1.1.1.1")
+            if _usable_lan_ip(r_ip):
+                iface, ip = str(r_iface), r_ip
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not iface:
+        iface = str(conf.iface)
+    if not _usable_lan_ip(ip):
+        try:
+            ip = get_if_addr(str(iface))
+        except Exception:  # noqa: BLE001
+            ip = None
 
     if not _usable_lan_ip(ip):
         for cand in get_if_list():
@@ -321,9 +337,31 @@ def _merge_passive_hosts(
         hosts[mac] = Host(mac=mac, ip=seen.ip, subnet=cidr)
 
 
+def _refresh_scapy_routes() -> None:
+    """Re-read the OS routing table and interface list into scapy.
+
+    scapy snapshots both at import and never refreshes them on its own. The
+    agent starts at boot, often before DHCP has brought the LAN interface up,
+    so that snapshot can hold nothing but `lo` — which is how a sweep ends up
+    targeting 127.0.0.0/24 (or the right CIDR but `iface=lo`, with scapy then
+    logging "no default route"). Refreshing once per cycle is cheap and makes
+    the agent self-heal instead of needing a restart."""
+    from scapy.all import conf
+
+    try:
+        conf.route.resync()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        conf.ifaces.reload()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _arp_scan(full_sweep: bool = True) -> list[Host]:
     from scapy.all import ARP, Ether, srp
 
+    _refresh_scapy_routes()
     targets = _scan_targets()
     hosts: dict[str, Host] = {}
 

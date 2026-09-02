@@ -78,6 +78,30 @@ def test_route_lookup_failure_assumes_on_link(monkeypatch):
 
 # ------------------------------------------------------------------- _detect_subnet
 
+def _blind_route(monkeypatch):
+    """Make scapy's routing table useless (what a boot-time snapshot with only
+    `lo` up looks like), so _detect_subnet has to fall back to the interface
+    scan."""
+    from scapy.all import conf
+
+    monkeypatch.setattr(
+        conf.route, "route", lambda dest: ("lo", "0.0.0.0", "0.0.0.0")
+    )
+
+
+def test_detect_subnet_prefers_the_routing_table(monkeypatch):
+    """The interface/source-IP the OS would use to reach a public address is
+    the real LAN one — and, unlike conf.iface, not a stale boot snapshot."""
+    from scapy.all import conf
+
+    monkeypatch.setattr(scanner.settings, "interface", "")
+    monkeypatch.setattr(scanner.settings, "subnet", "")
+    monkeypatch.setattr(
+        conf.route, "route", lambda dest: ("eth0", "192.168.9.20", "192.168.9.1")
+    )
+    assert scanner._detect_subnet() == ("192.168.9.0/24", "eth0")
+
+
 def test_detect_subnet_skips_loopback_iface(monkeypatch):
     """scapy's conf.iface resolves to `lo` on a box with no default route (and
     in some containers); auto-detect must walk past 127.0.0.1 to the real NIC
@@ -86,6 +110,7 @@ def test_detect_subnet_skips_loopback_iface(monkeypatch):
 
     monkeypatch.setattr(scanner.settings, "interface", "")
     monkeypatch.setattr(scanner.settings, "subnet", "")
+    _blind_route(monkeypatch)
     monkeypatch.setattr(scapy_all.conf, "iface", "lo")
     monkeypatch.setattr(scapy_all, "get_if_list", lambda: ["lo", "eth0"])
     monkeypatch.setattr(
@@ -101,11 +126,40 @@ def test_detect_subnet_raises_when_only_loopback_exists(monkeypatch):
 
     monkeypatch.setattr(scanner.settings, "interface", "")
     monkeypatch.setattr(scanner.settings, "subnet", "")
+    _blind_route(monkeypatch)
     monkeypatch.setattr(scapy_all.conf, "iface", "lo")
     monkeypatch.setattr(scapy_all, "get_if_list", lambda: ["lo"])
     monkeypatch.setattr(scapy_all, "get_if_addr", lambda i: "127.0.0.1")
     with pytest.raises(RuntimeError):
         scanner._detect_subnet()
+
+
+# ------------------------------------------------------- _refresh_scapy_routes
+
+def test_refresh_scapy_routes_swallows_backend_errors(monkeypatch):
+    """It runs every cycle for its side effect; a scapy that refuses to resync
+    must never take the sweep down with it."""
+    from scapy.all import conf
+
+    def boom(*a, **kw):
+        raise OSError("netlink unavailable")
+
+    monkeypatch.setattr(conf.route, "resync", boom)
+    monkeypatch.setattr(conf.ifaces, "reload", boom)
+    scanner._refresh_scapy_routes()  # must not raise
+
+
+def test_arp_scan_refreshes_routes_first(monkeypatch):
+    """Regression: the agent starts at boot before DHCP, so scapy's cached
+    routing table can hold only `lo`. Every sweep must re-read it."""
+    calls: list[str] = []
+    monkeypatch.setattr(scanner, "_refresh_scapy_routes", lambda: calls.append("x"))
+    monkeypatch.setattr(scanner, "_scan_targets", lambda: [])
+    monkeypatch.setattr(scanner, "_neighbour_table", lambda: {})
+    monkeypatch.setattr(scanner, "_local_host", lambda iface: None)
+    monkeypatch.setattr(scanner.settings, "enable_passive_arp", False)
+    scanner._arp_scan()
+    assert calls == ["x"]
 
 
 # ------------------------------------------------------------------- _scan_targets
@@ -175,6 +229,7 @@ def _patch_arp_scan_dependencies(monkeypatch, on_link_map, srp_result=None, ping
 
     monkeypatch.setattr(scanner.settings, "interface", "")
     monkeypatch.setattr(scanner.settings, "enable_passive_arp", False)
+    monkeypatch.setattr(scanner, "_refresh_scapy_routes", lambda: None)
     monkeypatch.setattr(scapy_all.conf.route, "route", _fake_route(on_link_map))
     monkeypatch.setattr(scapy_all, "srp", lambda *a, **kw: (srp_result or [], []))
     monkeypatch.setattr(scanner, "_ping_sweep", lambda *a, **kw: list(ping_result or []))
