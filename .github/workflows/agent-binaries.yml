@@ -193,8 +193,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m http.server 8899 --bind 127.0.0.1 >/dev/null 2>&1 &
+          # macOS is a folder build now, so the executable is one level in.
           sudo ../../macos/install-daemon.sh --panel http://127.0.0.1:8899 \
-            --token ci-token --name ci-runner --binary ./cherubyte-agent
+            --token ci-token --name ci-runner --binary ./cherubyte-agent/cherubyte-agent
           # the loop sleeps 3s before the first cycle, then the report round-trip
           # — poll rather than guess a single sleep on a slow runner
           ok=""
