@@ -10,6 +10,7 @@ the same agent works unchanged when a relay is later put between the two: only
 from __future__ import annotations
 
 import json
+import time
 import logging
 from pathlib import Path
 
@@ -27,7 +28,16 @@ AGENT_VERSION = "1.2.1"
 
 
 class NotEnrolled(RuntimeError):
-    """No key yet, and no token to get one with."""
+    """No key yet, and no way to get one."""
+
+
+class AwaitingApproval(RuntimeError):
+    """A code has been issued and nobody has approved it yet.
+
+    Not an error in the sense the others are: it is the normal state of a
+    machine sitting at the enrolment prompt, and the caller waits rather than
+    giving up.
+    """
 
 
 def _state_path() -> Path:
@@ -88,6 +98,118 @@ async def enrol() -> tuple[int, str]:
     save_credentials(issued.agent_id, issued.key)
     logger.info("Enrolled with the panel as agent %s (%s)", issued.agent_id, issued.name)
     return issued.agent_id, issued.key
+
+
+# ── enrolling by approval ──────────────────────────────────────────────────
+#
+# The other way in, and the one a person uses. Rather than carrying a token
+# from the panel to this machine, the machine asks for a code, prints a link,
+# and somebody already signed in to the panel approves it. Nothing is copied,
+# so nothing is left in a shell history or a config file afterwards.
+#
+# The shape is the OAuth device flow: a short code for the human, a long secret
+# for the machine, and polling until the answer changes. Which means it works
+# on a headless box over SSH, where opening a browser locally does not.
+
+
+def _pending_path() -> Path:
+    """Where an unfinished enrolment is kept between restarts.
+
+    Alongside the key, because it becomes the key. Without this a service that
+    restarts while somebody is walking to their browser would throw away the
+    code it just printed and ask for another, and the link in the terminal
+    would quietly stop working.
+    """
+    return _state_path().with_name("enrolment.json")
+
+
+def load_pending() -> dict | None:
+    path = _pending_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (ValueError, OSError):
+        return None
+    if not data.get("code") or not data.get("poll_secret"):
+        return None
+    if time.time() > float(data.get("expires_at", 0)):
+        return None
+    return data
+
+
+def save_pending(data: dict) -> None:
+    path = _pending_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+    # The poll secret collects a key, so it is a credential like any other.
+    path.chmod(0o600)
+
+
+def clear_pending() -> None:
+    _pending_path().unlink(missing_ok=True)
+
+
+async def request_device_code() -> dict:
+    """Ask the panel for a code, and remember it."""
+    async with httpx.AsyncClient(timeout=settings.report_timeout_seconds) as client:
+        response = await client.post(
+            f"{panel_base()}/api/agents/device-code",
+            json={"name": settings.name or "", "version": AGENT_VERSION},
+        )
+    if response.status_code >= 400:
+        raise NotEnrolled(
+            f"Panel refused to issue an enrolment code ({response.status_code}): "
+            f"{response.text[:200]}"
+        )
+    issued = response.json()
+    issued["expires_at"] = time.time() + float(issued.get("expires_in", 600))
+    save_pending(issued)
+    return issued
+
+
+async def collect_device_key(pending: dict) -> tuple[int, str]:
+    """Try to collect the key. Raises AwaitingApproval until somebody says yes."""
+    async with httpx.AsyncClient(timeout=settings.report_timeout_seconds) as client:
+        response = await client.post(
+            f"{panel_base()}/api/agents/device-token",
+            json={"code": pending["code"], "poll_secret": pending["poll_secret"]},
+        )
+    if response.status_code == 202:
+        raise AwaitingApproval(pending["code"])
+    if response.status_code >= 400:
+        # The code is spent, expired or wrong. Forget it so the next attempt
+        # asks for a fresh one instead of polling a dead code forever.
+        clear_pending()
+        raise NotEnrolled(
+            f"Enrolment code refused ({response.status_code}): {response.text[:200]}"
+        )
+    issued = EnrolResponse.model_validate(response.json())
+    save_credentials(issued.agent_id, issued.key)
+    clear_pending()
+    logger.info("Enrolled with the panel as agent %s (%s)", issued.agent_id, issued.name)
+    return issued.agent_id, issued.key
+
+
+async def enrol_by_approval() -> tuple[int, str]:
+    """One step of the approval flow: ask if needed, then try to collect.
+
+    Called repeatedly by the caller's own loop rather than blocking here, so a
+    service is never wedged inside enrolment and its health endpoint keeps
+    answering while somebody finds their browser.
+    """
+    pending = load_pending()
+    if pending is None:
+        pending = await request_device_code()
+        logger.warning(
+            "\n\n  This machine is not enrolled yet.\n"
+            "  To admit it, open:\n\n      %s\n\n"
+            "  and approve the code %s. The link is good for %d minutes.\n",
+            pending.get("verification_url", ""),
+            pending.get("code", ""),
+            int(float(pending.get("expires_in", 600)) // 60),
+        )
+    return await collect_device_key(pending)
 
 
 async def send(report: AgentReport, agent_id: int, key: str) -> ReportAck | None:

@@ -44,7 +44,17 @@ async def _ensure_enrolled() -> tuple[int, str] | None:
         _state["enrolled"] = True
         return stored
     try:
-        issued = await reporter.enrol()
+        # A pre-auth token wins when one is set: that is the unattended path,
+        # for imaging a machine or a config management run, and it must not
+        # stop to wait for a human who is not there.
+        if settings.enrol_token:
+            issued = await reporter.enrol()
+        else:
+            issued = await reporter.enrol_by_approval()
+    except reporter.AwaitingApproval as exc:
+        # Not a failure. Somebody is walking to their browser.
+        _state["last_error"] = f"waiting for approval of code {exc}"
+        return None
     except reporter.NotEnrolled as exc:
         _state["last_error"] = str(exc)
         logger.error("%s", exc)
