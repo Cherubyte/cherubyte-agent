@@ -76,6 +76,38 @@ def test_route_lookup_failure_assumes_on_link(monkeypatch):
     assert on_link is True, "unknown routing must fall back to today's behaviour, not silently drop the subnet"
 
 
+# ------------------------------------------------------------------- _detect_subnet
+
+def test_detect_subnet_skips_loopback_iface(monkeypatch):
+    """scapy's conf.iface resolves to `lo` on a box with no default route (and
+    in some containers); auto-detect must walk past 127.0.0.1 to the real NIC
+    rather than returning 127.0.0.0/24."""
+    import scapy.all as scapy_all
+
+    monkeypatch.setattr(scanner.settings, "interface", "")
+    monkeypatch.setattr(scanner.settings, "subnet", "")
+    monkeypatch.setattr(scapy_all.conf, "iface", "lo")
+    monkeypatch.setattr(scapy_all, "get_if_list", lambda: ["lo", "eth0"])
+    monkeypatch.setattr(
+        scapy_all,
+        "get_if_addr",
+        lambda i: {"lo": "127.0.0.1", "eth0": "192.168.4.7"}.get(i, "0.0.0.0"),
+    )
+    assert scanner._detect_subnet() == ("192.168.4.0/24", "eth0")
+
+
+def test_detect_subnet_raises_when_only_loopback_exists(monkeypatch):
+    import scapy.all as scapy_all
+
+    monkeypatch.setattr(scanner.settings, "interface", "")
+    monkeypatch.setattr(scanner.settings, "subnet", "")
+    monkeypatch.setattr(scapy_all.conf, "iface", "lo")
+    monkeypatch.setattr(scapy_all, "get_if_list", lambda: ["lo"])
+    monkeypatch.setattr(scapy_all, "get_if_addr", lambda i: "127.0.0.1")
+    with pytest.raises(RuntimeError):
+        scanner._detect_subnet()
+
+
 # ------------------------------------------------------------------- _scan_targets
 
 def test_scan_targets_resolves_interface_per_subnet(monkeypatch):
@@ -100,6 +132,28 @@ def test_scan_targets_resolves_interface_per_subnet(monkeypatch):
     targets = _scan_targets()
     assert ("192.168.1.0/24", "eth0") in targets
     assert ("192.168.80.0/24", "wlan0") in targets
+
+
+def test_a_configured_loopback_subnet_is_refused(monkeypatch, caplog):
+    """A stale auto-detected 127.0.0.0/24 (or a typo) must never be swept —
+    it holds no LAN and would have the agent ARP-broadcasting at itself."""
+    from scapy.all import conf
+
+    monkeypatch.setattr(scanner.settings, "interface", "")
+    monkeypatch.setattr(scanner.settings, "subnet", "")
+    monkeypatch.setattr(
+        scanner.settings,
+        "subnets",
+        [{"cidr": "127.0.0.0/24"}, {"cidr": "192.168.1.0/24"}],
+    )
+    monkeypatch.setattr(
+        conf.route, "route", _fake_route({"192.168.1.0/24": ("eth0", "0.0.0.0")})
+    )
+    with caplog.at_level("WARNING"):
+        targets = _scan_targets()
+    assert ("192.168.1.0/24", "eth0") in targets
+    assert not any(c.startswith("127.") for c, _ in targets)
+    assert any("127.0.0.0/24" in r.message for r in caplog.records)
 
 
 def test_a_pinned_interface_overrides_per_subnet_routing(monkeypatch):
