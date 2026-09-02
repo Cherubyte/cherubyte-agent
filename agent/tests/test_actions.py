@@ -57,13 +57,13 @@ def open_port():
 
 
 async def test_quick_port_scan_finds_a_listening_port(open_port, monkeypatch):
-    monkeypatch.setitem(PROBE_PORTS, open_port, "test")
-    try:
-        result = await actions.run_one(
-            DeviceActionRequest(id=3, kind="port_scan_quick", ip="127.0.0.1")
-        )
-    finally:
-        del PROBE_PORTS[open_port]
+    # a full replacement, not setitem — the CI runner has real services (e.g.
+    # sshd on 22) listening locally, and the unpatched PROBE_PORTS would find
+    # them too, same as it would on any other machine
+    monkeypatch.setattr(actions, "PROBE_PORTS", {open_port: "test"})
+    result = await actions.run_one(
+        DeviceActionRequest(id=3, kind="port_scan_quick", ip="127.0.0.1")
+    )
     assert result.ok is True
     assert result.open_ports == {open_port: "test"}
 
