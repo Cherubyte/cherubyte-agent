@@ -8,11 +8,13 @@
 
 FROM python:3.11-slim AS runtime
 
-# iputils-ping -> the ICMP sweep and the internet probe shell out to `ping`
+# iputils-ping -> the ICMP sweep, the internet probe, and the on-demand ping
+#                 action shell out to `ping`
 # iproute2     -> the kernel neighbour table is read with `ip -4 neigh show`
 # snmp         -> optional SNMP reads (sysDescr, LLDP-MIB) shell out to snmpget/snmpwalk
+# traceroute   -> the on-demand traceroute action shells out to `traceroute`
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iputils-ping iproute2 snmp tzdata \
+    && apt-get install -y --no-install-recommends iputils-ping iproute2 snmp traceroute tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

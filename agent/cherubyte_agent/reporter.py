@@ -23,7 +23,7 @@ logger = logging.getLogger("cherubyte.agent.reporter")
 # The agent's own version — this repo's source of truth for it. Bump on every
 # change; a GitHub release is tagged `v<this>` and the panel offers that build
 # for download. (Independent of the panel's version and of PROTOCOL_VERSION.)
-AGENT_VERSION = "1.1.2"
+AGENT_VERSION = "1.2.0"
 
 
 class NotEnrolled(RuntimeError):
