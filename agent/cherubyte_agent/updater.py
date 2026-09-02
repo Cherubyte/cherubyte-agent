@@ -75,13 +75,45 @@ def _record_installed(version: str) -> None:
         logger.warning("Could not record the installed version: %s", exc)
 
 
-def running_binary() -> Path | None:
-    """The executable to replace, or None when running from source.
+SOURCE = "source"
+ONEFILE = "onefile"
+ONEDIR = "onedir"
 
-    PyInstaller sets `frozen`; without it this is a checkout or a pip install
-    and there is no single file that is the agent.
+
+def packaging_mode() -> str:
+    """How this agent was built, which decides how it can be replaced.
+
+    A onefile build is a single executable that unpacks itself to a temporary
+    directory at each start, so swapping that one file is a complete update.
+    A onedir build is a folder of libraries beside the executable: replacing
+    the executable alone would leave it loading last version's libraries,
+    which fails in ways that look nothing like a bad update.
+
+    PyInstaller sets `_MEIPASS` to wherever it unpacked to. For onefile that
+    is a temporary directory somewhere else; for onedir it is inside the
+    installed folder. That is the difference, and it is more reliable than a
+    build-time constant somebody has to remember to change.
     """
     if not getattr(sys, "frozen", False):
+        return SOURCE
+    unpacked = getattr(sys, "_MEIPASS", None)
+    if not unpacked:
+        return ONEFILE
+    here = Path(sys.executable).resolve().parent
+    try:
+        return ONEDIR if Path(unpacked).resolve().is_relative_to(here) else ONEFILE
+    except (OSError, ValueError):
+        return ONEFILE
+
+
+def running_binary() -> Path | None:
+    """The executable to replace, or None when it cannot be replaced this way.
+
+    Only a onefile build can be updated by swapping one file. Anything else
+    goes through its installer, which is the thing that knows how to stop the
+    service, replace a folder of locked libraries and start it again.
+    """
+    if packaging_mode() != ONEFILE:
         return None
     return Path(sys.executable).resolve()
 
@@ -95,7 +127,7 @@ def sweep_previous() -> None:
     """
     current = running_binary()
     if current is None:
-        return
+        return  # source, or a folder build that updates through its installer
     previous = current.with_name(current.name + ".old")
     if previous.exists():
         try:
@@ -134,6 +166,14 @@ async def check_and_apply(agent_id: int, key: str, current_version: str) -> str 
     """
     binary = running_binary()
     if binary is None:
+        if packaging_mode() == ONEDIR:
+            # Not an error, and not silence either: an agent that quietly
+            # stopped updating itself would look identical to one that was
+            # already current.
+            logger.info(
+                "This build updates through its installer, which is not wired up yet. "
+                "Reinstall from the latest release to move to a newer version."
+            )
         return None
 
     base = settings.panel_url.rstrip("/")

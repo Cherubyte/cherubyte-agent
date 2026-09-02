@@ -375,3 +375,48 @@ async def test_a_genuinely_newer_release_still_installs_after_one_update(
     panel["payload"] = later
     panel["sums"], panel["signature"] = _sums(signing, later)
     assert await updater.check_and_apply(1, "key", "2.0.0") == "2.1.0"
+
+
+# -- folder builds cannot be swapped a file at a time -------------------------
+
+
+def test_a_source_checkout_is_recognised(monkeypatch):
+    monkeypatch.delattr(updater.sys, "frozen", raising=False)
+    assert updater.packaging_mode() == updater.SOURCE
+    assert updater.running_binary() is None
+
+
+def test_a_onefile_build_is_recognised(monkeypatch, tmp_path):
+    # Unpacked somewhere else entirely, which is what onefile does.
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(updater.sys, "executable", str(tmp_path / "app" / "agent"), raising=False)
+    monkeypatch.setattr(updater.sys, "_MEIPASS", str(tmp_path / "temp" / "_MEI123"), raising=False)
+    assert updater.packaging_mode() == updater.ONEFILE
+    assert updater.running_binary() is not None
+
+
+def test_a_folder_build_refuses_the_file_swap(monkeypatch, tmp_path):
+    # Replacing the executable alone would leave it loading last version's
+    # libraries, which fails in ways that look nothing like a bad update.
+    app = tmp_path / "app"
+    app.mkdir()
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(updater.sys, "executable", str(app / "agent"), raising=False)
+    monkeypatch.setattr(updater.sys, "_MEIPASS", str(app / "_internal"), raising=False)
+    assert updater.packaging_mode() == updater.ONEDIR
+    assert updater.running_binary() is None
+
+
+@pytest.mark.asyncio
+async def test_a_folder_build_says_it_is_not_updating_itself(monkeypatch, tmp_path, caplog):
+    # Silence here would be indistinguishable from an agent that is already
+    # current.
+    app = tmp_path / "app"
+    app.mkdir()
+    monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(updater.sys, "executable", str(app / "agent"), raising=False)
+    monkeypatch.setattr(updater.sys, "_MEIPASS", str(app / "_internal"), raising=False)
+
+    with caplog.at_level("INFO"):
+        assert await updater.check_and_apply(1, "key", "1.0.0") is None
+    assert "installer" in caplog.text

@@ -24,15 +24,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Windows and macOS build a folder, so the thing published is an
+          # installer rather than the executable. Linux stays a single file:
+          # a shell installer and a container both want one, and it has no
+          # Defender scanning every extracted library on each start.
           - os: windows-latest
-            asset: cherubyte-agent-windows-x86_64.exe
+            asset: CherubyteAgentSetup.exe
             binary: cherubyte-agent.exe
+            layout: onedir
           - os: ubuntu-latest
             asset: cherubyte-agent-linux-x86_64
             binary: cherubyte-agent
+            layout: onefile
           - os: macos-latest
-            asset: cherubyte-agent-macos-arm64
+            asset: cherubyte-agent-macos-arm64.tar.gz
             binary: cherubyte-agent
+            layout: onedir
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +111,7 @@ jobs:
           # by approval, and nothing here noticed because nothing here ever ran
           # it without one.
           ..\..\windows\install-service.ps1 -PanelUrl http://127.0.0.1:8899 `
-            -Name ci-browserless -NoBrowser -ExePath (Resolve-Path .\cherubyte-agent.exe)
+            -Name ci-browserless -NoBrowser -ExePath (Resolve-Path .\cherubyte-agent\cherubyte-agent.exe)
 
           $state = Join-Path $env:ProgramData 'Cherubyte Agent\agent.json'
           if (-not (Test-Path $state)) {
@@ -119,7 +126,7 @@ jobs:
           Start-Sleep -Seconds 2
 
           ..\..\windows\install-service.ps1 -PanelUrl http://127.0.0.1:8899 `
-            -EnrolToken ci-token -Name ci-runner -ExePath (Resolve-Path .\cherubyte-agent.exe)
+            -EnrolToken ci-token -Name ci-runner -ExePath (Resolve-Path .\cherubyte-agent\cherubyte-agent.exe)
 
           $svc = Get-Service CherubyteAgent
           Write-Host "service status: $($svc.Status)"
@@ -202,9 +209,36 @@ jobs:
           sudo ../../macos/uninstall-daemon.sh --purge
           echo 'macOS: installed, configured, contacted the panel, removed.'
 
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: agent/packaging
+        # iscc ships with the GitHub Windows runner image. The version comes
+        # from the tag when there is one, so Add/Remove Programs shows
+        # something meaningful rather than 0.0.0.
+        run: |
+          iscc /DAppVersion=%AGENT_VERSION% /O.. ..\windows\cherubyte-agent.iss
+        env:
+          AGENT_VERSION: ${{ github.event_name == 'release' && github.ref_name || '0.0.0' }}
+
       - name: Name the asset
         shell: bash
-        run: cp "agent/packaging/dist/${{ matrix.binary }}" "${{ matrix.asset }}"
+        run: |
+          case "${{ matrix.os }}" in
+            windows-latest)
+              # iscc wrote it beside the spec directory.
+              mv agent/CherubyteAgentSetup.exe "${{ matrix.asset }}"
+              ;;
+            macos-latest)
+              # A folder cannot be a release asset, so it travels as a tarball
+              # until the .pkg installer exists.
+              tar -czf "${{ matrix.asset }}" -C agent/packaging/dist cherubyte-agent
+              ;;
+            *)
+              cp "agent/packaging/dist/${{ matrix.binary }}" "${{ matrix.asset }}"
+              ;;
+          esac
+          ls -l "${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v4
         with:

@@ -8,6 +8,11 @@
 import sys
 
 WINDOWS = sys.platform == "win32"
+MACOS = sys.platform == "darwin"
+
+# Windows and macOS get a folder; Linux keeps the single file. See the module
+# docstring above for why the two differ.
+ONEDIR = WINDOWS or MACOS
 
 hidden = [
     "cherubyte_agent.main",
@@ -53,15 +58,40 @@ a = Analysis(
     excludes=["matplotlib", "pkg_resources", "setuptools"],
 )
 pyz = PYZ(a.pure, a.zipped_data)
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    name="cherubyte-agent",
-    debug=False,
-    strip=False,
-    upx=False,
-    console=True,
-)
+
+if ONEDIR:
+    # exclude_binaries hands the libraries to COLLECT instead of embedding
+    # them, which is the whole difference between a folder and a
+    # self-extracting file.
+    exe = EXE(
+        pyz,
+        a.scripts,
+        exclude_binaries=True,
+        name="cherubyte-agent",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=True,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        name="cherubyte-agent",
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        name="cherubyte-agent",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=True,
+    )
