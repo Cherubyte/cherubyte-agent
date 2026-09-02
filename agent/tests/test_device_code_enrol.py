@@ -279,3 +279,47 @@ async def test_a_notice_that_cannot_be_written_is_not_fatal(panel, state, monkey
         await reporter.enrol_by_approval()
     # The enrolment itself carried on: the code was requested and stored.
     assert reporter.load_pending() is not None
+
+
+# -- what an unadmitted agent is allowed to do -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_sniffed_until_the_machine_is_admitted(panel, monkeypatch):
+    # It used to start both sniffers at startup, so an agent waiting to be
+    # approved was already capturing packets on somebody's machine - work it
+    # had nowhere to send, on a machine whose owner had not said yes yet.
+    from cherubyte_agent import arp_sniffer, dhcp_sniffer, main
+
+    started: list[str] = []
+    monkeypatch.setattr(arp_sniffer, "start", lambda: started.append("arp"))
+    monkeypatch.setattr(dhcp_sniffer, "start", lambda: started.append("dhcp"))
+    monkeypatch.setattr(reporter, "load_credentials", lambda: None)
+
+    async def waiting():
+        raise reporter.AwaitingApproval("K7RQ-4TDX")
+
+    monkeypatch.setattr(reporter, "enrol_by_approval", waiting)
+
+    await main._cycle()
+    assert started == []
+
+
+@pytest.mark.asyncio
+async def test_sniffing_begins_once_it_is_admitted(panel, monkeypatch):
+    from cherubyte_agent import arp_sniffer, dhcp_sniffer, main
+
+    started: list[str] = []
+    monkeypatch.setattr(arp_sniffer, "start", lambda: started.append("arp"))
+    monkeypatch.setattr(dhcp_sniffer, "start", lambda: started.append("dhcp"))
+    monkeypatch.setattr(reporter, "load_credentials", lambda: (7, "key"))
+    monkeypatch.setattr(settings, "auto_update", False)
+
+    async def nothing_to_report(*_a, **_k):
+        raise RuntimeError("stop here; the sniffers are what this is about")
+
+    monkeypatch.setattr(main, "collect", nothing_to_report)
+    with pytest.raises(RuntimeError):
+        await main._cycle()
+
+    assert sorted(started) == ["arp", "dhcp"]

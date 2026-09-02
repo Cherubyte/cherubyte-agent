@@ -70,11 +70,26 @@ async def _ensure_enrolled() -> tuple[int, str] | None:
     return issued
 
 
+def _start_sniffers() -> None:
+    """Begin listening, now that this agent has been admitted.
+
+    Deliberately not at startup. An agent waiting to be approved has nowhere
+    to send anything it hears, so capturing packets before then is work with
+    no purpose - and on a machine whose owner has not yet said yes. Both
+    start() calls are idempotent, so calling this every cycle costs a branch.
+    """
+    if settings.enable_dhcp_sniffer:
+        dhcp_sniffer.start()
+    if settings.enable_passive_arp:
+        arp_sniffer.start()
+
+
 async def _cycle() -> None:
     credentials = await _ensure_enrolled()
     if credentials is None:
         return
     agent_id, key = credentials
+    _start_sniffers()
     # Before the sweep, not after: if this installs something it exits, and
     # doing a full scan first would throw that work away.
     await _maybe_update(agent_id, key)
@@ -172,10 +187,11 @@ async def _loop() -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    if settings.enable_dhcp_sniffer:
-        dhcp_sniffer.start()
-    if settings.enable_passive_arp:
-        arp_sniffer.start()
+    # The sniffers are NOT started here. They used to be, which meant an agent
+    # nobody had admitted yet was already capturing packets on somebody's
+    # machine - doing work whose results it had nowhere to send, and listening
+    # before anyone had said it could. They start on the first cycle that has
+    # credentials instead. See _start_sniffers.
     # Getting this far is the proof the new binary works, so the one it
     # replaced can go.
     updater.sweep_previous()
