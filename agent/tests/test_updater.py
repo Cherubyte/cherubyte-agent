@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import time
 
 import httpx
 import pytest
@@ -261,10 +262,33 @@ async def test_the_check_is_skipped_when_it_is_turned_off(monkeypatch):
     monkeypatch.setattr(settings, "auto_update", False)
     called = []
     monkeypatch.setattr(updater, "check_and_apply", lambda *a: called.append(a))
-    main._last_update_check = 0.0
+    main._last_update_check = None
 
     await main._maybe_update(1, "key")
     assert called == []
+
+
+@pytest.mark.asyncio
+async def test_it_checks_once_on_start_however_long_the_machine_has_been_up(monkeypatch):
+    # This was `_last_update_check = 0.0` compared against time.monotonic(),
+    # which counts from boot — so the first check was skipped until the machine
+    # had been up for the whole interval, and one rebooted daily never updated
+    # at all. Found by CI, whose runners are always freshly booted.
+    from cherubyte_agent import main
+
+    monkeypatch.setattr(settings, "auto_update", True)
+    monkeypatch.setattr(time, "monotonic", lambda: 12.0)
+    calls = []
+
+    async def check(*a):
+        calls.append(a)
+        return None
+
+    monkeypatch.setattr(updater, "check_and_apply", check)
+    main._last_update_check = None
+
+    await main._maybe_update(1, "key")
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio
@@ -282,7 +306,7 @@ async def test_it_does_not_ask_on_every_cycle(monkeypatch):
         return None
 
     monkeypatch.setattr(updater, "check_and_apply", check)
-    main._last_update_check = 0.0
+    main._last_update_check = None
 
     await main._maybe_update(1, "key")
     await main._maybe_update(1, "key")
@@ -297,7 +321,7 @@ async def test_a_failed_update_never_stops_the_agent(monkeypatch):
     from cherubyte_agent import main
 
     monkeypatch.setattr(settings, "auto_update", True)
-    main._last_update_check = 0.0
+    main._last_update_check = None
 
     async def boom(*_a):
         raise updater.UpdateError("the panel is not answering")

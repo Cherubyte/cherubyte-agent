@@ -110,7 +110,11 @@ async def _cycle() -> None:
     )
 
 
-_last_update_check = 0.0
+# None until the first check, rather than 0.0. `time.monotonic()` counts from
+# an arbitrary point — on Linux, boot — so comparing an interval against 0.0
+# means "has this machine been up for six hours", not "has it been six hours
+# since the last check". A machine rebooted daily would never have updated.
+_last_update_check: float | None = None
 
 
 async def _maybe_update(agent_id: int, key: str) -> None:
@@ -125,7 +129,10 @@ async def _maybe_update(agent_id: int, key: str) -> None:
     if not settings.auto_update:
         return
     now = time.monotonic()
-    if now - _last_update_check < settings.update_check_interval_seconds:
+    if (
+        _last_update_check is not None
+        and now - _last_update_check < settings.update_check_interval_seconds
+    ):
         return
     _last_update_check = now
 
