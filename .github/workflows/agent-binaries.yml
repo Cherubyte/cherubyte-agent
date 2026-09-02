@@ -194,9 +194,15 @@ jobs:
   # update — and a panel is worth compromising. The signature is what stops it
   # serving something else: the agent carries the public key compiled in, and
   # will not execute a download whose digest is not in a list this key signed.
+  # Runs on every push to main, not only on a release. Signing that is only
+  # ever exercised when cutting a release is signing nobody finds out is broken
+  # until the moment it matters — and a release with no usable signature is one
+  # no installed agent will update from. Here it just does not attach anything.
   sign:
     needs: build
-    if: github.event_name == 'release'
+    # Not on pull requests: secrets are not available to a fork's PR, so it
+    # would fail for a contributor rather than telling them anything.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -254,6 +260,7 @@ jobs:
           print("The signature verifies against the key compiled into the agent.")
           PY
       - name: Attach the digests and the signature
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
