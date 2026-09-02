@@ -7,7 +7,7 @@
   no Docker and no interactive login.
 
   Enrolment happens here, in this window, and that is deliberate. The agent
-  can enrol itself by printing a link to approve — but a Windows service has
+  can enrol itself by printing a link to approve - but a Windows service has
   nowhere to print to, so on this platform that link went to a log nobody was
   reading and the agent sat there waiting forever with no way to admit it.
   Doing it during install means there is a console to show the link in and a
@@ -45,7 +45,7 @@ $PanelUrl = $PanelUrl.TrimEnd('/')
 
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
         ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'Run this from an elevated PowerShell — registering a service needs it.'
+    throw 'Run this from an elevated PowerShell - registering a service needs it.'
 }
 
 if (-not $ExePath) { $ExePath = Join-Path $PSScriptRoot 'cherubyte-agent.exe' }
@@ -98,7 +98,7 @@ function Invoke-DeviceEnrolment {
 
     if (-not $NoBrowser) {
         try { Start-Process $start.verification_url | Out-Null }
-        catch { Write-Host '  (Could not open a browser — use the link above.)' }
+        catch { Write-Host '  (Could not open a browser - use the link above.)' }
     }
 
     Write-Host 'Waiting for you to approve it. Ctrl+C to give up.' -NoNewline
@@ -112,7 +112,7 @@ function Invoke-DeviceEnrolment {
                 -ContentType 'application/json' -Body $poll -TimeoutSec 30
         } catch {
             # 403: the code expired or was already used. Anything else is worth
-            # retrying — a flaky link should not lose an approval you just gave.
+            # retrying - a flaky link should not lose an approval you just gave.
             if ($_.Exception.Response.StatusCode.value__ -eq 403) {
                 Write-Host ''
                 throw 'The enrolment code expired or was already used. Run this again.'
@@ -133,7 +133,7 @@ function Invoke-DeviceEnrolment {
 
 $enrolledAs = $null
 if (Test-Path $StateFile) {
-    Write-Host 'Already enrolled on this machine — keeping the existing key.'
+    Write-Host 'Already enrolled on this machine - keeping the existing key.'
 } elseif ($EnrolToken) {
     Write-Host 'Using the enrolment token supplied.'
 } else {
@@ -151,7 +151,7 @@ Copy-Item -Path $ExePath -Destination (Join-Path $InstallDir 'cherubyte-agent.ex
 # The Service Control Manager caches its environment block, so a machine
 # variable written here is invisible to the service registered moments later,
 # until the machine reboots. The service would start on the built-in defaults,
-# never find a panel, and sit there reporting itself alive — a failure with no
+# never find a panel, and sit there reporting itself alive - a failure with no
 # error anywhere. A file also keeps a token out of the service's command line,
 # where any user could read it with `sc qc` or Task Manager.
 $lines = @(
@@ -171,7 +171,7 @@ if ($enrolledAs) {
 }
 
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-    Write-Host 'Service already exists — stopping it to upgrade'
+    Write-Host 'Service already exists - stopping it to upgrade'
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     sc.exe delete $ServiceName | Out-Null
     Start-Sleep -Seconds 2
@@ -201,7 +201,7 @@ Start-Sleep -Seconds 3
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 function Get-AgentHealth {
     # The endpoint answers 503 when the agent is degraded, which is exactly
-    # the case worth reporting — and Invoke-RestMethod throws on it. So the
+    # the case worth reporting - and Invoke-RestMethod throws on it. So the
     # body has to be dug out of the error, and the two PowerShell editions
     # put it in different places.
     try {
@@ -225,7 +225,7 @@ $health = Get-AgentHealth
 
 Write-Host ''
 Write-Host "Cherubyte agent installed as '$Name'." -ForegroundColor Green
-Write-Host "  Service:  $ServiceName — $($svc.Status)"
+Write-Host "  Service:  $ServiceName - $($svc.Status)"
 if ($health) {
     Write-Host "  Enrolled: $($health.enrolled)"
     if ($health.last_error) { Write-Host "  Note:     $($health.last_error)" -ForegroundColor Yellow }

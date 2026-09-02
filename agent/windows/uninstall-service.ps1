@@ -30,7 +30,7 @@ Remove-Item -Recurse -Force "$env:ProgramFiles\Cherubyte Agent" -ErrorAction Sil
 $StateDir = Join-Path $env:ProgramData 'Cherubyte Agent'
 if ($Purge) {
     Remove-Item -Recurse -Force $StateDir -ErrorAction SilentlyContinue
-    Write-Host 'Configuration and state removed — a new enrolment token will be needed.'
+    Write-Host 'Configuration and state removed - a new enrolment token will be needed.'
 } elseif (Test-Path $StateDir) {
     Write-Host "State kept at $StateDir (pass -Purge to remove it)."
 }
