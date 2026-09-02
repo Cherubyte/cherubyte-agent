@@ -9,12 +9,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import time
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from . import actions, arp_sniffer, dhcp_sniffer, reporter, wol
+from . import actions, arp_sniffer, dhcp_sniffer, reporter, updater, wol
 from .collector import collect
 from .config import apply_config, settings
 
@@ -73,6 +75,9 @@ async def _cycle() -> None:
     if credentials is None:
         return
     agent_id, key = credentials
+    # Before the sweep, not after: if this installs something it exits, and
+    # doing a full scan first would throw that work away.
+    await _maybe_update(agent_id, key)
     report = await collect()
     # Outcomes from actions the previous cycle picked up — there was nothing
     # to send them on until this report.
@@ -105,6 +110,40 @@ async def _cycle() -> None:
     )
 
 
+_last_update_check = 0.0
+
+
+async def _maybe_update(agent_id: int, key: str) -> None:
+    """Check for a newer release, occasionally, and install it if it verifies.
+
+    Exits the process on success rather than trying to carry on: the binary
+    under this process has been replaced, and the service manager starting the
+    new one is the whole mechanism. Everything up to that point leaves the
+    running agent untouched, so a failure here costs one log line.
+    """
+    global _last_update_check
+    if not settings.auto_update:
+        return
+    now = time.monotonic()
+    if now - _last_update_check < settings.update_check_interval_seconds:
+        return
+    _last_update_check = now
+
+    try:
+        installed = await updater.check_and_apply(agent_id, key, reporter.AGENT_VERSION)
+    except (updater.UpdateError, Exception) as exc:  # noqa: BLE001
+        # Never fatal. An agent that stops reporting because an update failed
+        # is worse than one running last month's build.
+        logger.warning("Update check failed: %s", exc)
+        return
+    if installed:
+        logger.warning("Restarting into %s", installed)
+        # The service manager brings it back. Both units are Restart=on-failure,
+        # and a clean exit here would not be restarted — so this is deliberately
+        # a failing status.
+        os._exit(1)
+
+
 async def _loop() -> None:
     # a short delay so the panel has a chance to be up in a compose start
     await asyncio.sleep(3)
@@ -130,6 +169,9 @@ async def lifespan(app: FastAPI):
         dhcp_sniffer.start()
     if settings.enable_passive_arp:
         arp_sniffer.start()
+    # Getting this far is the proof the new binary works, so the one it
+    # replaced can go.
+    updater.sweep_previous()
     task = asyncio.create_task(_loop())
     logger.info("Cherubyte agent up; panel=%s", reporter.panel_base())
     yield

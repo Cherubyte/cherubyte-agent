@@ -104,6 +104,18 @@ class Settings(BaseSettings):
     # How long to wait for the panel before giving up on one report.
     report_timeout_seconds: float = 30.0
 
+    # Keeping itself current. On by default, because an agent nobody updates
+    # is an agent running whatever it was installed with — and off is one
+    # setting away for anyone who would rather drive it themselves.
+    #
+    # An update is only ever installed if its digest is in a list signed by the
+    # release key compiled into this binary, so the panel it downloads from
+    # cannot decide what it runs. See `release_key`.
+    auto_update: bool = True
+    # Six hours. A new release is not urgent, and every check is a request
+    # from every agent on every network.
+    update_check_interval_seconds: int = 21600
+
 
 settings = Settings()
 
