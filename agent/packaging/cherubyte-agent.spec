@@ -46,7 +46,11 @@ a = Analysis(
     # pulls in jaraco.context, which needs `backports`, which does not get
     # collected. The binary then dies at startup with ModuleNotFoundError before
     # a single line of our code runs. Leaving it out removes the hook entirely.
-    excludes=["tkinter", "matplotlib", "pkg_resources", "setuptools"],
+    # tkinter is no longer excluded: the settings window is built on it, and
+    # it ships with Python, so the alternative was a second GUI toolkit for
+    # one screen. matplotlib and the setuptools pair stay out for the reasons
+    # above.
+    excludes=["matplotlib", "pkg_resources", "setuptools"],
 )
 pyz = PYZ(a.pure, a.zipped_data)
 exe = EXE(

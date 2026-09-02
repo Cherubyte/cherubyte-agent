@@ -71,7 +71,11 @@ class Settings(BaseSettings):
 
     # Health endpoint, so a container runtime can tell a wedged agent from a
     # working one. Deliberately not an API — the agent takes no orders.
-    health_host: str = "0.0.0.0"
+    # Loopback by default. This answers with device counts, the panel address
+    # and whether the agent is enrolled, none of which belongs on the LAN of
+    # the network it is watching. Docker sets it back to 0.0.0.0, where
+    # publishing it is the point and the container boundary is the control.
+    health_host: str = "127.0.0.1"
     health_port: int = 1002
 
     # Scanning. Mirrors what the panel used to own; see the scanner module.

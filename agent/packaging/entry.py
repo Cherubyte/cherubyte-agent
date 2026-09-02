@@ -7,8 +7,19 @@ and launchd supervise a normal process and want it to stay in the foreground.
 
 import sys
 
+# The verbs this binary answers to besides being a service. Kept apart from
+# the Windows service framework's own words - install, update, remove, start,
+# stop, restart, debug - which pywin32 parses out of the same argv.
+CLI_COMMANDS = {"status", "up", "version", "tray", "apply-settings", "--help", "-h", "help"}
+
 
 def main() -> None:
+    argv = sys.argv[1:]
+    if argv and argv[0] in CLI_COMMANDS:
+        from cherubyte_agent.cli import run
+
+        raise SystemExit(run(argv))
+
     if sys.platform == "win32":
         from cherubyte_agent.winservice import main as service_main
 

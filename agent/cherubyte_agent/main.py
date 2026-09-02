@@ -28,6 +28,12 @@ logger = logging.getLogger("cherubyte.agent")
 
 _state: dict = {
     "enrolled": False,
+    # Set while a machine is waiting to be admitted, so a tray icon or the
+    # command line can show the link rather than leaving it in a log. This is
+    # the whole reason the Windows install was unusable: the agent knew the
+    # link and had nowhere to put it.
+    "enrolment_url": None,
+    "enrolment_code": None,
     "last_report_at": None,
     "last_report_ok": None,
     "last_hosts": None,
@@ -55,6 +61,9 @@ async def _ensure_enrolled() -> tuple[int, str] | None:
             issued = await reporter.enrol_by_approval()
     except reporter.AwaitingApproval as exc:
         # Not a failure. Somebody is walking to their browser.
+        pending = reporter.load_pending() or {}
+        _state["enrolment_url"] = pending.get("verification_url")
+        _state["enrolment_code"] = pending.get("code") or str(exc)
         _state["last_error"] = f"waiting for approval of code {exc}"
         return None
     except reporter.NotEnrolled as exc:
@@ -67,6 +76,8 @@ async def _ensure_enrolled() -> tuple[int, str] | None:
         return None
     _state["enrolled"] = True
     _state["last_error"] = None
+    _state["enrolment_url"] = None
+    _state["enrolment_code"] = None
     return issued
 
 
@@ -224,6 +235,11 @@ async def health():
     """
     ok = _state["enrolled"] and _state["last_report_ok"] is not False
     return JSONResponse(
-        {"status": "ok" if ok else "degraded", **_state},
+        {
+            "status": "ok" if ok else "degraded",
+            "version": reporter.AGENT_VERSION,
+            "panel_url": reporter.panel_base(),
+            **_state,
+        },
         status_code=200 if ok else 503,
     )
