@@ -328,3 +328,50 @@ async def test_a_failed_update_never_stops_the_agent(monkeypatch):
 
     monkeypatch.setattr(updater, "check_and_apply", boom)
     await main._maybe_update(1, "key")  # does not raise
+
+
+# -- the loop that would brick a fleet ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_it_records_what_it_installed(signing, binary, panel, tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "state_file", str(tmp_path / "agent.json"))
+    panel["sums"], panel["signature"] = _sums(signing, NEW_BINARY)
+
+    await updater.check_and_apply(1, "key", "1.0.0")
+    assert updater.last_installed() == "2.0.0"
+
+
+@pytest.mark.asyncio
+async def test_it_will_not_install_the_same_version_twice(
+    signing, binary, panel, tmp_path, monkeypatch, caplog
+):
+    # The failure this exists for: a binary whose compiled-in version lags the
+    # release it came from. It updates, still reports the old version, sees the
+    # release as newer, installs it again, exits, restarts — forever, on every
+    # machine at once. Nothing else in the design stops that.
+    monkeypatch.setattr(settings, "state_file", str(tmp_path / "agent.json"))
+    panel["sums"], panel["signature"] = _sums(signing, NEW_BINARY)
+
+    assert await updater.check_and_apply(1, "key", "1.0.0") == "2.0.0"
+
+    # Restarted, and still reporting the old version.
+    with caplog.at_level("ERROR"):
+        assert await updater.check_and_apply(1, "key", "1.0.0") is None
+    assert "does not match the release" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_newer_release_still_installs_after_one_update(
+    signing, binary, panel, tmp_path, monkeypatch
+):
+    # The guard must not wedge an agent whose versions are fine.
+    monkeypatch.setattr(settings, "state_file", str(tmp_path / "agent.json"))
+    panel["sums"], panel["signature"] = _sums(signing, NEW_BINARY)
+    assert await updater.check_and_apply(1, "key", "1.0.0") == "2.0.0"
+
+    later = b"#!/bin/sh\necho newer still\n"
+    panel["version"] = "2.1.0"
+    panel["payload"] = later
+    panel["sums"], panel["signature"] = _sums(signing, later)
+    assert await updater.check_and_apply(1, "key", "2.0.0") == "2.1.0"

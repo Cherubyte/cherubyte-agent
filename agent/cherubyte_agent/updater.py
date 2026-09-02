@@ -52,6 +52,29 @@ class UpdateError(RuntimeError):
     """The update could not be completed. The running binary is untouched."""
 
 
+def _installed_marker() -> Path:
+    """Where the last version this updater installed is recorded."""
+    return Path(settings.state_file).with_name("installed-version")
+
+
+def last_installed() -> str:
+    try:
+        return _installed_marker().read_text().strip()
+    except OSError:
+        return ""
+
+
+def _record_installed(version: str) -> None:
+    try:
+        marker = _installed_marker()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(version)
+    except OSError as exc:
+        # Not fatal, but it is the thing that stops an update loop, so it is
+        # worth being loud about.
+        logger.warning("Could not record the installed version: %s", exc)
+
+
 def running_binary() -> Path | None:
     """The executable to replace, or None when running from source.
 
@@ -123,6 +146,21 @@ async def check_and_apply(agent_id: int, key: str, current_version: str) -> str 
         if not version or not is_newer(version, current_version):
             return None
 
+        if version == last_installed():
+            # We already installed this and are still reporting something
+            # older, which means the version compiled into the binary does not
+            # match the release it came from. Without this the agent would
+            # install it, exit, restart, and do the whole thing again forever.
+            logger.error(
+                "Refusing to install %s again: this agent reports itself as %s after "
+                "already updating to %s, so its compiled-in version does not match the "
+                "release it came from. Updates are stopped until that is fixed.",
+                version,
+                current_version,
+                version,
+            )
+            return None
+
         if not manifest.get("sums") or not manifest.get("signature"):
             # An older release, from before signing. Refusing is the whole
             # point: an unsigned update is one the panel could have written.
@@ -174,6 +212,7 @@ async def check_and_apply(agent_id: int, key: str, current_version: str) -> str 
         staged.unlink(missing_ok=True)
         raise UpdateError(f"could not swap the binary: {exc}") from exc
 
+    _record_installed(version)
     logger.warning(
         "Updated to %s. Exiting so the service manager starts the new binary; "
         "the previous one is kept as %s until it does.",

@@ -216,6 +216,25 @@ jobs:
           path: assets
           merge-multiple: true
 
+      # The version compiled into the agent is what it reports, and what the
+      # updater compares a release against. If the constant lags the tag, an
+      # updated agent reports the old version, sees the release as newer,
+      # installs it again, exits, restarts and never stops — so a mismatch
+      # fails the release rather than shipping it.
+      - name: The tag and the compiled-in version must agree
+        if: github.event_name == 'release'
+        run: |
+          set -e
+          tag="${GITHUB_REF_NAME#v}"
+          compiled=$(grep -oP 'AGENT_VERSION = "\K[^"]+' agent/cherubyte_agent/reporter.py)
+          echo "tag=$tag compiled=$compiled"
+          if [ "$tag" != "$compiled" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match AGENT_VERSION $compiled." >&2
+            echo "An agent built here would report $compiled, see $tag as newer, and" >&2
+            echo "reinstall it on every restart. Bump the constant or retag." >&2
+            exit 1
+          fi
+
       - name: List the digests
         working-directory: assets
         run: sha256sum cherubyte-agent-* > ../SHA256SUMS
