@@ -218,12 +218,50 @@ def _scan_targets() -> list[tuple[str, str | None]]:
             except ValueError:
                 logger.warning("ignoring invalid configured subnet %r", cidr)
                 continue
+            if not _sweepable_cidr(cidr):
+                continue
             out.append((cidr, pinned or _route_for(cidr)[0]))
         if out:
             return out
-    if settings.subnet:
+    if settings.subnet and _sweepable_cidr(settings.subnet):
         return [(settings.subnet, pinned or _route_for(settings.subnet)[0])]
     return [_detect_subnet()]
+
+
+def _sweepable_cidr(cidr: str) -> bool:
+    """A configured subnet worth sweeping. Loopback and link-local ranges never
+    are — a stale auto-detected ``127.0.0.0/24`` (see `_detect_subnet`) or a
+    typo'd config would otherwise have the agent broadcasting ARP at itself and
+    reporting nothing. Logged once so the misconfiguration is visible."""
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+    if net.is_loopback or net.is_link_local:
+        if cidr not in _offlink_warned:
+            _offlink_warned.add(cidr)
+            logger.warning(
+                "ignoring configured subnet %s: loopback/link-local ranges "
+                "hold no LAN to scan — set CHERUBYTE_SUBNET to your real subnet.",
+                cidr,
+            )
+        return False
+    return True
+
+
+def _usable_lan_ip(ip: str | None) -> bool:
+    """Whether `ip` is an address we could actually sweep a LAN from. Rejects
+    the unset sentinel, loopback (127/8) and link-local (169.254/16) — scapy's
+    ``conf.iface`` resolves to ``lo`` on a box with no default route (or inside
+    some containers), and a naive check would then happily "auto-detect"
+    127.0.0.0/24 and scan nothing."""
+    if not ip or ip == "0.0.0.0":
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return not (addr.is_loopback or addr.is_link_local or addr.is_unspecified)
 
 
 def _detect_subnet() -> tuple[str, str | None]:
@@ -238,17 +276,23 @@ def _detect_subnet() -> tuple[str, str | None]:
     except Exception:  # noqa: BLE001
         ip = None
 
-    if not ip or ip == "0.0.0.0":
+    if not _usable_lan_ip(ip):
         for cand in get_if_list():
             if cand == "lo":
                 continue
-            addr = get_if_addr(cand)
-            if addr and addr != "0.0.0.0":
+            try:
+                addr = get_if_addr(cand)
+            except Exception:  # noqa: BLE001
+                continue
+            if _usable_lan_ip(addr):
                 iface, ip = cand, addr
                 break
 
-    if not ip or ip == "0.0.0.0":
-        raise RuntimeError("Could not determine local IP; set CHERUBYTE_SUBNET.")
+    if not _usable_lan_ip(ip):
+        raise RuntimeError(
+            "Could not determine a usable LAN address (only loopback/link-local "
+            "found); set CHERUBYTE_SUBNET (or CHERUBYTE_SUBNETS) explicitly."
+        )
 
     net = ipaddress.ip_network(f"{ip}/24", strict=False)
     return str(net), str(iface)
