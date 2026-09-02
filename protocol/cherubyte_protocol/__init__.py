@@ -45,6 +45,9 @@ __all__ = [
     "WanObservation",
     "DhcpServerObservation",
     "LldpNeighbor",
+    "DeviceActionRequest",
+    "DeviceActionResult",
+    "TracerouteHop",
 ]
 
 
@@ -126,6 +129,39 @@ class WanObservation(BaseModel):
     public_ip: str | None = None
 
 
+class DeviceActionRequest(BaseModel):
+    """A one-off, on-demand probe queued for a single device — ping, a port
+    scan, or a traceroute — as opposed to the agent's own periodic sweep.
+    Delivered the same way as a Wake-on-LAN request: handed to every agent
+    reporting in the pickup window, since only the one on the target's
+    segment can actually reach it; the rest no-op harmlessly."""
+
+    id: int
+    kind: str  # "ping" | "port_scan_quick" | "port_scan_full" | "traceroute"
+    ip: str
+
+
+class TracerouteHop(BaseModel):
+    ttl: int
+    ip: str | None = None
+    rtt_ms: float | None = None
+
+
+class DeviceActionResult(BaseModel):
+    """An agent's outcome for a `DeviceActionRequest` it was able to run."""
+
+    id: int
+    ok: bool
+    error: str | None = None
+    # ping
+    latency_ms: float | None = None
+    packet_loss: float | None = None
+    # port_scan_quick / port_scan_full
+    open_ports: dict[int, str] = Field(default_factory=dict)
+    # traceroute
+    hops: list[TracerouteHop] = Field(default_factory=list)
+
+
 class AgentReport(BaseModel):
     """One sweep, as delivered to the panel."""
 
@@ -141,6 +177,10 @@ class AgentReport(BaseModel):
     dhcp_servers: list[DhcpServerObservation] = Field(default_factory=list)
     # DHCP fingerprints the agent's passive sniffer has collected, by MAC.
     dhcp_fingerprints: int = 0
+    # Outcomes for `ReportAck.actions` requests this agent picked up and ran
+    # since its last report. Additive and optional: an old agent never sends
+    # this, so it defaults empty against an old or new panel alike.
+    action_results: list[DeviceActionResult] = Field(default_factory=list)
     # False when the sweep found nothing at all. A healthy sweep always sees at
     # least the agent's own host, so this is "the scan is broken", not "the
     # network emptied" — and the panel must not expire devices on it.
@@ -201,6 +241,10 @@ class ReportAck(BaseModel):
     # packet to each on its local segment. Additive and optional: an old agent
     # ignores the field, a new agent against an old panel sees an empty list.
     wake: list[str] = Field(default_factory=list)
+    # On-demand probes the panel wants tried against a single device — same
+    # broadcast-to-every-agent, harmless-if-off-segment delivery as `wake`.
+    # Additive and optional: an old agent ignores the field.
+    actions: list[DeviceActionRequest] = Field(default_factory=list)
 
 
 class EnrolRequest(BaseModel):

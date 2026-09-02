@@ -38,6 +38,9 @@ command -v systemctl >/dev/null || { echo "systemd not found — see the Docker 
 for tool in ping ip; do
   command -v "$tool" >/dev/null || echo "WARNING: '$tool' not found; install iputils-ping and iproute2." >&2
 done
+# Only the on-demand traceroute action needs this — everything else still
+# works without it, so it is a warning, not the errors above.
+command -v traceroute >/dev/null || echo "WARNING: 'traceroute' not found; install it for the device-page traceroute action." >&2
 
 echo ">> Installing $SRC -> $BIN"
 install -m 0755 "$SRC" "$BIN"

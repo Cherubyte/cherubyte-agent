@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from . import arp_sniffer, dhcp_sniffer, reporter, wol
+from . import actions, arp_sniffer, dhcp_sniffer, reporter, wol
 from .collector import collect
 from .config import apply_config, settings
 
@@ -64,6 +64,9 @@ async def _cycle() -> None:
         return
     agent_id, key = credentials
     report = await collect()
+    # Outcomes from actions the previous cycle picked up — there was nothing
+    # to send them on until this report.
+    report.action_results = actions.take_pending()
     ack = await reporter.send(report, agent_id, key)
     if ack is not None:
         changed = apply_config(ack.config)
@@ -76,6 +79,10 @@ async def _cycle() -> None:
         macs = getattr(ack, "wake", None) or []
         if macs:
             wol.send_all(macs)
+        pending_actions = getattr(ack, "actions", None) or []
+        if pending_actions:
+            logger.info("Running %d on-demand action(s) from the panel", len(pending_actions))
+            await actions.run_and_stash(pending_actions)
     _state.update(
         last_report_at=datetime.now(timezone.utc).isoformat(),
         last_report_ok=ack is not None,
