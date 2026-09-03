@@ -41,6 +41,9 @@ jobs:
             binary: cherubyte-agent
             layout: onedir
     runs-on: ${{ matrix.os }}
+    # A step waiting for input it will never get should cost minutes, not the
+    # six hours the default limit allowed.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -178,6 +181,7 @@ jobs:
 
       - name: Install and remove with the real installer (Windows)
         if: runner.os == 'Windows'
+        timeout-minutes: 10
         shell: powershell
         working-directory: agent
         run: |
@@ -201,6 +205,14 @@ jobs:
           $svc = Get-Service CherubyteAgent -ErrorAction SilentlyContinue
           if (-not $svc) { throw 'the installer did not register the service' }
           Write-Host "service: $($svc.Status)"
+
+          # The binary the installer placed has to actually run. A folder build
+          # missing a library starts, fails to load its own runtime and exits,
+          # which a service status check alone would not catch.
+          $exe = Join-Path $installed 'cherubyte-agent.exe'
+          $reported = & $exe version 2>&1
+          Write-Host "version says: $reported"
+          if ($LASTEXITCODE -ne 0) { throw "the installed binary could not run: $reported" }
 
           # It appears in Add/Remove Programs, which is where somebody will
           # look to get rid of it.

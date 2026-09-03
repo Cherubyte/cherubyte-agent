@@ -84,10 +84,13 @@ Filename: "{sys}\sc.exe"; Parameters: "start {#ServiceName}"; \
 ; Enrolment, in a window, after the service is up. `up` asks the service for
 ; the link, opens a browser and waits. Shown rather than hidden because the
 ; whole point is that somebody can see it.
+; skipifsilent matters: a silent install is an unattended one, and enrolment
+; waits for a person to click a link. Without it the installer sits there
+; until something kills it, which is exactly what it did in CI.
 Filename: "{app}\cherubyte-agent.exe"; Parameters: "up"; \
     Description: "Admit this machine to a panel now"; \
     StatusMsg: "Waiting for you to approve this machine..."; \
-    Flags: postinstall waituntilterminated
+    Flags: postinstall waituntilterminated skipifsilent
 
 Filename: "{app}\cherubyte-agent.exe"; Parameters: "tray"; \
     Description: "Show the status icon"; Flags: postinstall nowait skipifsilent
