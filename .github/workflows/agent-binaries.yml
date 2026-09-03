@@ -369,9 +369,21 @@ jobs:
             exit 1
           fi
 
+      # Everything the release publishes, not a name pattern. The pattern was
+      # `cherubyte-agent-*`, and the Windows asset became
+      # CherubyteAgentSetup.exe - so the installer, the one file most people
+      # download, was published with nothing to verify it against and the
+      # release still looked signed.
+      #
+      # The installers are copied in first so they are covered too. They are
+      # scripts somebody runs as root.
       - name: List the digests
         working-directory: assets
-        run: sha256sum cherubyte-agent-* > ../SHA256SUMS
+        run: |
+          cp ../agent/windows/install-service.ps1              ../agent/windows/uninstall-service.ps1              ../agent/linux/install-service.sh              ../agent/macos/install-daemon.sh .
+          ls -1
+          sha256sum * > ../SHA256SUMS
+          cat ../SHA256SUMS
 
       - name: Sign the list
         env:
@@ -412,6 +424,18 @@ jobs:
           )
           print("The signature verifies against the key compiled into the agent.")
           PY
+
+      - name: Every published file must be in the signed list
+        working-directory: assets
+        run: |
+          # The failure this exists for is silent: a release that looks signed
+          # while the file most people download is not in the list.
+          missing=0
+          for f in *; do
+            grep -q "  $f\$" ../SHA256SUMS || { echo "NOT SIGNED: $f" >&2; missing=1; }
+          done
+          [ "$missing" = 0 ] || { echo "Refusing to publish an unverifiable release." >&2; exit 1; }
+          echo "All $(ls -1 | wc -l) published files are in the signed list."
       # The installers go with the binaries. A release that is three bare
       # executables leaves somebody to find the install script in the
       # repository, which is one step too many and the reason the first
@@ -423,7 +447,7 @@ jobs:
           files: |
             SHA256SUMS
             SHA256SUMS.sig
-            agent/windows/install-service.ps1
-            agent/windows/uninstall-service.ps1
-            agent/linux/install-service.sh
-            agent/macos/install-daemon.sh
+            assets/install-service.ps1
+            assets/uninstall-service.ps1
+            assets/install-service.sh
+            assets/install-daemon.sh
