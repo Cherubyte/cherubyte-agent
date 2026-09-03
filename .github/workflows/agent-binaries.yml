@@ -226,8 +226,9 @@ jobs:
 
           # And it comes off again. An installer that cannot be undone is
           # worse than a script.
-          $uninstall = $key.QuietUninstallString
-          if (-not $uninstall) { $uninstall = $key.UninstallString + ' /VERYSILENT' }
+          # Inno's own QuietUninstallString is only /SILENT, which still shows
+          # message boxes. Both flags, so a prompt cannot stall this again.
+          $uninstall = $key.UninstallString + ' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
           Write-Host "uninstalling with $uninstall"
           Start-Process -FilePath 'cmd.exe' -Wait -ArgumentList '/c', $uninstall
           Start-Sleep -Seconds 5

@@ -161,7 +161,8 @@ begin
     WriteAgentConfig;
 end;
 
-// Uninstalling leaves the key and configuration behind by default. Somebody
+// Uninstalling leaves the key and configuration behind by default, and always
+// when it is silent. Somebody
 // reinstalling to fix something should not have to enrol again, and a machine
 // that silently became a different agent on reinstall would show up twice in
 // the panel with no explanation.
@@ -171,6 +172,12 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
+    // A silent uninstall must never ask anything. Deployment tooling runs it
+    // with no desktop to answer on, and a prompt there does not fail - it
+    // waits forever, which is precisely what it did in CI.
+    if UninstallSilent then
+      Exit;
+
     DataDir := ExpandConstant('{commonappdata}\Cherubyte Agent');
     if DirExists(DataDir) then
       if MsgBox('Remove this machine''s enrolment as well?' + #13#10 +
